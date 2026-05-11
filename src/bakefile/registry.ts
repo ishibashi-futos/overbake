@@ -15,17 +15,24 @@ export class TaskRegistry {
 
     let actualFn: TaskFunction;
     let actualOptions: TaskOptions = {};
+    let isMeta = false;
 
     if (typeof optionsOrFn === "function") {
       actualFn = optionsOrFn;
     } else {
       actualOptions = optionsOrFn;
-      actualFn = fn || (() => {});
+      if (fn) {
+        actualFn = fn;
+      } else {
+        actualFn = () => {};
+        isMeta = true;
+      }
     }
 
     this.tasks.set(name, {
       name,
       fn: actualFn,
+      isMeta,
       options: actualOptions,
     });
   }

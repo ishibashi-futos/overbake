@@ -5,6 +5,7 @@ import { TaskRegistry } from "../bakefile/registry.ts";
 import { resolveTasks } from "../graph/resolver.ts";
 import type { TaskDefinition } from "../types.ts";
 import { createTaskContext } from "./context.ts";
+import { runWithHooks } from "./hooks.ts";
 
 export { createTaskContext } from "./context.ts";
 
@@ -28,7 +29,7 @@ export async function executePlan(plan: ExecutionPlan): Promise<void> {
   for (const task of plan.tasks) {
     const ctx = createTaskContext({ name: task.name, root: plan.root, cwd });
     console.log(`Running task: ${task.name}`);
-    await task.fn(ctx);
+    await runWithHooks(task, ctx);
   }
 }
 

@@ -44,5 +44,6 @@ export interface HookContext {
 export interface TaskDefinition {
   name: string;
   fn: TaskFunction;
+  isMeta?: boolean;
   options?: TaskOptions;
 }
