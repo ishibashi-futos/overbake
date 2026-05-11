@@ -1,8 +1,16 @@
 {
   "name": "overbake",
-  "module": "index.ts",
+  "module": "src/index.ts",
   "type": "module",
   "private": true,
+  "bin": {
+    "bake": "dist/bake"
+  },
+  "scripts": {
+    "prebuild": "rm -rf dist",
+    "build": "bun build src/cli/main.ts --compile --outfile=dist/bake",
+    "clean": "rm -rf dist"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },

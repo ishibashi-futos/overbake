@@ -33,6 +33,7 @@ run_check() {
 # 各工程を実行
 run_check "Type check" bunx tsc --noEmit
 run_check "Formatting" bunx biome check .
+run_check "Build" bun run build
 run_check "Unit tests" bun test
 
 echo "\n✨ All checks passed! You're good to go."
