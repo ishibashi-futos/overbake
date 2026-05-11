@@ -7,8 +7,7 @@
     "bake": "dist/bake"
   },
   "scripts": {
-    "prebuild": "rm -rf dist",
-    "build": "bun build src/cli/main.ts --compile --outfile=dist/bake",
+    "build": "bun src/cli/main.ts build",
     "clean": "rm -rf dist"
   },
   "devDependencies": {

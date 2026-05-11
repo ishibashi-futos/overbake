@@ -386,4 +386,111 @@ task("c", { deps: ["b"] }, () => {
     expect(existsSync("Bakefile.ts")).toBe(true);
     expect(existsSync("Bakefile.d.ts")).toBe(true);
   });
+
+  test("task receives TaskContext with required properties", async () => {
+    const bakefileContent = `
+task("contexted", (ctx) => {
+  // Context is passed to the task function
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const bakefilePath = resolve(tempDir, "Bakefile.ts");
+    const registry = new TaskRegistry();
+    await loadBakefile(bakefilePath, registry);
+    const task = registry.get("contexted");
+    expect(task).toBeDefined();
+    if (task) {
+      const { createTaskContext } = await import("../src/runtime/executor.ts");
+      const ctx = createTaskContext({ name: "contexted", root: tempDir });
+      await task.fn(ctx);
+
+      expect(ctx.name).toBe("contexted");
+      expect(ctx.root).toBe(tempDir);
+      expect(typeof ctx.cmd).toBe("function");
+      expect(typeof ctx.rm).toBe("function");
+      expect(typeof ctx.exists).toBe("function");
+      expect(typeof ctx.resolve).toBe("function");
+      expect(typeof ctx.log).toBe("function");
+    }
+  });
+
+  test("ctx.cmd executes command successfully", async () => {
+    const bakefileContent = `
+task("run-cmd", async (ctx) => {
+  await ctx.cmd("echo", ["test"]);
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const bakefilePath = resolve(tempDir, "Bakefile.ts");
+    const registry = new TaskRegistry();
+    await loadBakefile(bakefilePath, registry);
+    const task = registry.get("run-cmd");
+    expect(task).toBeDefined();
+    if (task) {
+      const { createTaskContext } = await import("../src/runtime/executor.ts");
+      const ctx = createTaskContext({ name: "run-cmd", root: tempDir });
+      // Should not throw
+      await task.fn(ctx);
+    }
+  });
+
+  test("ctx.rm removes files with root as base", async () => {
+    const subDir = resolve(tempDir, "subdir");
+    mkdirSync(subDir, { recursive: true });
+    const testFile = resolve(subDir, "test.txt");
+    writeFileSync(testFile, "test content");
+
+    expect(existsSync(testFile)).toBe(true);
+
+    const { createTaskContext } = await import("../src/runtime/executor.ts");
+    const ctx = createTaskContext({ name: "test", root: tempDir });
+    await ctx.rm("subdir", { recursive: true });
+
+    expect(existsSync(subDir)).toBe(false);
+  });
+
+  test("ctx.exists checks file existence relative to root", async () => {
+    const subDir = resolve(tempDir, "check-dir");
+    mkdirSync(subDir, { recursive: true });
+    const testFile = resolve(subDir, "exists.txt");
+    writeFileSync(testFile, "test");
+
+    const { createTaskContext } = await import("../src/runtime/executor.ts");
+    const ctx = createTaskContext({ name: "test", root: tempDir });
+
+    expect(ctx.exists("check-dir/exists.txt")).toBe(true);
+    expect(ctx.exists("nonexistent.txt")).toBe(false);
+  });
+
+  test("ctx.resolve returns absolute path relative to root", async () => {
+    const { createTaskContext } = await import("../src/runtime/executor.ts");
+    const ctx = createTaskContext({ name: "test", root: tempDir });
+
+    const resolved = ctx.resolve("subdir", "file.txt");
+    expect(resolved).toBe(resolve(tempDir, "subdir", "file.txt"));
+  });
+
+  test("ctx.cwd is user's working directory, ctx.root is Bakefile directory", async () => {
+    const bakefileContent = `
+task("check-paths", (ctx) => {
+  globalThis.capturedCwd = ctx.cwd;
+  globalThis.capturedRoot = ctx.root;
+});
+`;
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const subDir = resolve(tempDir, "work");
+    mkdirSync(subDir, { recursive: true });
+    process.chdir(subDir);
+
+    const g = globalThis as Record<string, unknown>;
+    await main(["check-paths"]);
+
+    expect(realpathSync(g.capturedCwd as string)).toBe(realpathSync(subDir));
+    expect(realpathSync(g.capturedRoot as string)).toBe(realpathSync(tempDir));
+  });
 });

@@ -32,3 +32,4 @@ claude -p "<依頼内容>" \
 ## Definition of Done
 
 - `scripts/sanity.sh` を実行し、型エラー・フォーマット・全件テストが全てパスすること
+- 機能追加の場合、ユーザー向けのドキュメントが README.md にシンプルに整備されていること

@@ -10,7 +10,32 @@ export interface TaskOptions {
   ) => void | Promise<void>;
 }
 
-export type TaskFunction = () => void | Promise<void>;
+export interface CmdOptions {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+}
+
+export interface RmOptions {
+  recursive?: boolean;
+  force?: boolean;
+}
+
+export interface TaskContext {
+  name: string;
+  root: string;
+  cwd: string;
+  cmd(
+    command: string,
+    args?: readonly string[],
+    options?: CmdOptions,
+  ): Promise<void>;
+  rm(path: string, options?: RmOptions): Promise<void>;
+  exists(path: string): boolean;
+  resolve(...segments: string[]): string;
+  log(...args: unknown[]): void;
+}
+
+export type TaskFunction = (ctx: TaskContext) => void | Promise<void>;
 
 export interface HookContext {
   name: string;

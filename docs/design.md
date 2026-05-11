@@ -39,13 +39,13 @@ Overbake のスイートスポット: **Bun を採用している中小規模プ
 
 ### 2.1 ゴール (MVP)
 
-- [ ] 依存ライブラリゼロ
-- [ ] `Bakefile.ts` を TS で記述、import 不要、`tsconfig` 不要で型補完が効く
+- [x] 依存ライブラリゼロ
+- [x] `Bakefile.ts` を TS で記述、import 不要、`tsconfig` 不要で型補完が効く
 - [ ] cwd から上方向に `Bakefile.ts` を自動探索
 - [ ] `deps` による DAG 解決と並列実行
 - [ ] コンテンツハッシュベースのインクリメンタルビルド (`inputs` / `outputs`)
 - [ ] `--watch` モードで該当タスクのみ再実行
-- [ ] `bake init` で初期化、`Bakefile.d.ts` を生成
+- [x] `bake init` で初期化、`Bakefile.d.ts` を生成
 - [ ] `--dry-run` / `--explain` でデバッグ可能
 
 ### 2.2 非ゴール (MVP では扱わない)
@@ -178,22 +178,22 @@ overbake/
 
 現行設計の方向性は妥当。ただし実装前に以下を修正方針として確定する。
 
-1. **`src/index.ts` への集約は禁止**  
+1. **`src/index.ts` への集約は禁止**
    CLI エントリポイントは薄く保ち、引数解析・Bakefile import・DAG 解決・実行・キャッシュを別モジュールへ分離する。
 
-2. **`resolver.ts` と `executor.ts` の境界を明確化する**  
+2. **`resolver.ts` と `executor.ts` の境界を明確化する**
    Resolver は「何をどの依存関係で実行するか」だけを返す。キャッシュ hit/miss、jobs、keep-going は Executor/Scheduler の責務にする。
 
-3. **Cache は Executor から呼ばれる補助機能に限定する**  
+3. **Cache は Executor から呼ばれる補助機能に限定する**
    Cache が実行順序を判断しない。Cache は `computeTaskHash`、`shouldSkip`、`writeEntry` を提供し、最終判断は実行オーケストレーション側で行う。
 
-4. **Watch は再実行対象の選定だけを持つ**  
+4. **Watch は再実行対象の選定だけを持つ**
    Watcher はファイルイベントを受け取り、影響タスク集合を返す。実行そのものは通常の `runtime/` を再利用する。
 
-5. **UI はドメイン判定を持たない**  
+5. **UI はドメイン判定を持たない**
    `--explain` の文言生成は `ui/` でよいが、差分計算は `cache/explain.ts` に置く。
 
-6. **テストは境界ごとに置く**  
+6. **テストは境界ごとに置く**
    DAG、cache、discover、impact はユニットテスト。CLI、init、実際の Bakefile import は integration テストで検証する。
 
 ---
