@@ -4,7 +4,7 @@ import { discoverBakefile } from "../bakefile/discover.ts";
 import { loadBakefile } from "../bakefile/loader.ts";
 import { TaskRegistry } from "../bakefile/registry.ts";
 import { CliError } from "../cli/error.ts";
-import { resolveTasks } from "../graph/resolver.ts";
+import { expandWildcardTargets, resolveTasks } from "../graph/resolver.ts";
 import type { TaskDefinition } from "../types.ts";
 import {
   colorRed,
@@ -72,7 +72,8 @@ export async function buildPlan(
   const root = dirname(bakefile);
   const registry = new TaskRegistry();
   await loadBakefile(bakefile, registry);
-  const taskNames = Array.isArray(taskName) ? taskName : [taskName];
+  const rawTargets = Array.isArray(taskName) ? taskName : [taskName];
+  const taskNames = expandWildcardTargets(rawTargets, registry.all());
   const tasks = resolveTasks(taskNames, registry.all());
   return { bakefile, root, tasks, targets: taskNames };
 }

@@ -18,7 +18,7 @@ import {
   generateZshCompletion,
 } from "../src/cli/completions.ts";
 import { main } from "../src/cli/main.ts";
-import { resolveTasks } from "../src/graph/resolver.ts";
+import { expandWildcardTargets, resolveTasks } from "../src/graph/resolver.ts";
 import { init } from "../src/init/init.ts";
 import {
   buildPlan,
@@ -34,6 +34,7 @@ import {
   DuplicateDefaultTaskError,
   DuplicateTaskError,
   TaskNotFoundError,
+  WildcardNoMatchError,
 } from "../src/shared/errors.ts";
 import { formatSummary, type TaskResult } from "../src/ui/format.ts";
 import { renderDot, renderMermaid } from "../src/ui/graph.ts";
@@ -3157,5 +3158,217 @@ task("fail2", () => { throw new Error("err2"); });`,
     expect(summaryLog).toContain("2 failed");
     expect(summaryLog).toContain("- fail1");
     expect(summaryLog).toContain("- fail2");
+  });
+});
+
+// issue #21: ネームスペース + ワイルドカード実行
+describe("issue #21: expandWildcardTargets", () => {
+  const tasks = [
+    { name: "build:frontend", fn: () => {}, options: {} },
+    { name: "build:backend", fn: () => {}, options: {} },
+    { name: "lint:js", fn: () => {}, options: {} },
+    { name: "lint:css", fn: () => {}, options: {} },
+    { name: "clean", fn: () => {}, options: {} },
+  ];
+
+  test("ワイルドカードなしのパターンはそのまま返す", () => {
+    const result = expandWildcardTargets(["build:frontend"], tasks);
+    expect(result).toEqual(["build:frontend"]);
+  });
+
+  test("build:* は build: で始まるタスクを全部展開する", () => {
+    const result = expandWildcardTargets(["build:*"], tasks);
+    expect(result).toEqual(["build:frontend", "build:backend"]);
+  });
+
+  test("lint:* は lint: で始まるタスクを全部展開する", () => {
+    const result = expandWildcardTargets(["lint:*"], tasks);
+    expect(result).toEqual(["lint:js", "lint:css"]);
+  });
+
+  test("* は全タスクを展開する", () => {
+    const result = expandWildcardTargets(["*"], tasks);
+    expect(result).toHaveLength(tasks.length);
+  });
+
+  test("ワイルドカードと通常名の混在", () => {
+    const result = expandWildcardTargets(["build:*", "clean"], tasks);
+    expect(result).toContain("build:frontend");
+    expect(result).toContain("build:backend");
+    expect(result).toContain("clean");
+  });
+
+  test("0 件マッチは WildcardNoMatchError をスロー", () => {
+    expect(() => expandWildcardTargets(["nonexistent:*"], tasks)).toThrow(
+      WildcardNoMatchError,
+    );
+  });
+
+  test("0 件マッチのエラーはパターン名を含む", () => {
+    let error: unknown;
+    try {
+      expandWildcardTargets(["xyz:*"], tasks);
+    } catch (e) {
+      error = e;
+    }
+    expect(error instanceof WildcardNoMatchError).toBe(true);
+    if (error instanceof Error) {
+      expect(error.message).toContain("xyz:*");
+    }
+  });
+});
+
+describe("issue #21: renderTaskList グルーピング表示", () => {
+  test("`:` を含まないタスクはフラット表示でグループヘッダーなし", () => {
+    const tasks = [
+      { name: "build", fn: () => {}, options: { desc: "ビルド" } },
+      { name: "clean", fn: () => {}, options: {} },
+    ];
+    const output = renderTaskList(tasks);
+    const lines = output.split("\n");
+    expect(output).toContain("build");
+    expect(output).toContain("clean");
+    expect(lines.some((l) => l === "build:")).toBe(false);
+  });
+
+  test("`:` を含むタスクはグループヘッダーの下に表示される", () => {
+    const tasks = [
+      { name: "build:frontend", fn: () => {}, options: {} },
+      { name: "build:backend", fn: () => {}, options: {} },
+    ];
+    const output = renderTaskList(tasks);
+    const lines = output.split("\n");
+    const headerIdx = lines.indexOf("build:");
+    expect(headerIdx).toBeGreaterThan(-1);
+    const frontendIdx = lines.findIndex((l) => l.includes("build:frontend"));
+    const backendIdx = lines.findIndex((l) => l.includes("build:backend"));
+    expect(headerIdx).toBeLessThan(frontendIdx);
+    expect(headerIdx).toBeLessThan(backendIdx);
+  });
+
+  test("グループ内タスクは 2 スペースインデントで表示される", () => {
+    const tasks = [
+      { name: "lint:js", fn: () => {}, options: { desc: "js linter" } },
+    ];
+    const output = renderTaskList(tasks);
+    const lines = output.split("\n");
+    const jsLine = lines.find((l) => l.includes("lint:js"));
+    expect(jsLine?.startsWith("  ")).toBe(true);
+  });
+
+  test("`:` なしと `:` ありタスクの混在で両方表示される", () => {
+    const tasks = [
+      { name: "clean", fn: () => {}, options: {} },
+      { name: "build:frontend", fn: () => {}, options: {} },
+      { name: "lint:js", fn: () => {}, options: {} },
+    ];
+    const output = renderTaskList(tasks);
+    const lines = output.split("\n");
+    expect(lines.some((l) => l === "build:")).toBe(true);
+    expect(lines.some((l) => l === "lint:")).toBe(true);
+    expect(output).toContain("clean");
+  });
+
+  test("グループ内タスクの desc が表示される", () => {
+    const tasks = [
+      {
+        name: "build:frontend",
+        fn: () => {},
+        options: { desc: "フロントエンドビルド" },
+      },
+    ];
+    const output = renderTaskList(tasks);
+    expect(output).toContain("フロントエンドビルド");
+  });
+});
+
+describe("issue #21: ワイルドカード CLI 統合テスト", () => {
+  let originalCwd: string;
+  let tempDir: string;
+  let logs: string[] = [];
+  let errors: string[] = [];
+  let originalLog: typeof console.log;
+  let originalError: typeof console.error;
+  let originalExit: typeof process.exit;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-wildcard-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+
+    logs = [];
+    errors = [];
+    originalLog = console.log;
+    originalError = console.error;
+    originalExit = process.exit;
+
+    console.log = (...args: string[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+    console.error = (...args: string[]) => {
+      errors.push(args.join(" "));
+    };
+    (process.exit as unknown) = () => {};
+  });
+
+  afterEach(() => {
+    console.log = originalLog;
+    console.error = originalError;
+    process.exit = originalExit;
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test('bake "build:*" は build: で始まるタスクを全部実行する', async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("build:frontend", () => { console.log("build:frontend"); });
+task("build:backend", () => { console.log("build:backend"); });
+task("test", () => { console.log("test"); });`,
+    );
+
+    await main(["build:*"]);
+
+    expect(logs).toContain("build:frontend");
+    expect(logs).toContain("build:backend");
+    expect(logs).not.toContain("test");
+  });
+
+  test("0 件マッチのワイルドカードは exit code 2 で終了する", async () => {
+    let exitCode: number | undefined;
+    (process.exit as unknown) = (code?: number) => {
+      exitCode = code;
+    };
+
+    writeFileSync("Bakefile.ts", `task("build", () => {});`);
+
+    await main(["nonexistent:*"]);
+
+    expect(exitCode).toBe(2);
+    expect(errors.some((e) => e.includes("nonexistent:*"))).toBe(true);
+  });
+
+  test("bake -l はグループヘッダーを表示する", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("build:frontend", { desc: "フロントエンド" }, () => {});
+task("build:backend", { desc: "バックエンド" }, () => {});
+task("clean", { desc: "クリーン" }, () => {});`,
+    );
+
+    await main(["-l"]);
+
+    const output = logs.join("\n");
+    expect(output).toContain("build:");
+    expect(output).toContain("build:frontend");
+    expect(output).toContain("build:backend");
+    expect(output).toContain("clean");
   });
 });

@@ -8,11 +8,40 @@ export function renderTaskList(tasks: TaskDefinition[]): string {
   const lines = ["Available tasks:"];
   const maxNameLength = Math.max(...tasks.map((t) => t.name.length));
 
+  // `:` を含まないタスクとグループ別タスクに分類
+  const ungrouped: TaskDefinition[] = [];
+  const groups = new Map<string, TaskDefinition[]>();
+
   for (const task of tasks) {
+    const colonIdx = task.name.indexOf(":");
+    if (colonIdx === -1) {
+      ungrouped.push(task);
+    } else {
+      const prefix = task.name.slice(0, colonIdx);
+      if (!groups.has(prefix)) {
+        groups.set(prefix, []);
+      }
+      groups.get(prefix)?.push(task);
+    }
+  }
+
+  // `:` なしのタスクをフラット表示
+  for (const task of ungrouped) {
     const paddedName = task.name.padEnd(maxNameLength);
     const desc = task.options?.desc ? ` - ${task.options.desc}` : "";
     lines.push(`  ${paddedName}${desc}`);
   }
+
+  // `:` プレフィックスでグループ表示
+  for (const [prefix, groupTasks] of groups) {
+    lines.push(`${prefix}:`);
+    for (const task of groupTasks) {
+      const paddedName = task.name.padEnd(maxNameLength);
+      const desc = task.options?.desc ? ` - ${task.options.desc}` : "";
+      lines.push(`  ${paddedName}${desc}`);
+    }
+  }
+
   return lines.join("\n");
 }
 

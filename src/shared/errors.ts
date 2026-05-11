@@ -32,3 +32,10 @@ export class DuplicateDefaultTaskError extends Error {
     this.name = "DuplicateDefaultTaskError";
   }
 }
+
+export class WildcardNoMatchError extends Error {
+  constructor(pattern: string) {
+    super(`Wildcard pattern '${pattern}' matched no tasks`);
+    this.name = "WildcardNoMatchError";
+  }
+}

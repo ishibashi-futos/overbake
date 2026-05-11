@@ -48,6 +48,11 @@ bake build --no-summary
 bake deploy --yes
 bake deploy -y
 
+# ネームスペース（: 区切り）タスクをワイルドカードで一括実行
+# シェルの glob 展開と衝突するため、必ずクォートで囲んでください
+bake "build:*"         # build: で始まるタスクを全部実行
+bake "lint:*"          # lint: で始まるタスクを全部実行
+
 # タスク一覧を表示
 bake list
 bake -l

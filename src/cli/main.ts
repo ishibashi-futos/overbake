@@ -13,7 +13,10 @@ import {
   printDryRun,
   printExplain,
 } from "../runtime/executor.ts";
-import { DuplicateDefaultTaskError } from "../shared/errors.ts";
+import {
+  DuplicateDefaultTaskError,
+  WildcardNoMatchError,
+} from "../shared/errors.ts";
 import { renderGraph } from "../ui/graph.ts";
 import {
   renderGlobalHelp,
@@ -249,7 +252,10 @@ export async function main(args: string[]): Promise<void> {
     let exitCode = 1;
     if (error instanceof CliError) {
       exitCode = error.exitCode;
-    } else if (error instanceof DuplicateDefaultTaskError) {
+    } else if (
+      error instanceof DuplicateDefaultTaskError ||
+      error instanceof WildcardNoMatchError
+    ) {
       exitCode = 2;
     }
     process.exit(exitCode);
