@@ -27,6 +27,16 @@ bake build --dry-run
 # 各タスクの desc / deps / inputs / outputs / env を表示する
 bake build --explain
 
+# 依存グラフを mermaid 形式で出力（タスクを実行しない）
+bake build --graph
+bake build --graph=mermaid
+
+# 依存グラフを Graphviz dot 形式で出力
+bake build --graph=dot
+
+# 全タスクの依存グラフを出力（タスク指定なし）
+bake --graph
+
 # 初回実行後、inputs に指定されたファイルの変更を監視して自動再実行
 # inputs 未指定の場合は Bakefile.ts を監視対象にする
 bake build --watch

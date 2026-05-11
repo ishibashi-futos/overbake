@@ -35,6 +35,7 @@ import {
   DuplicateTaskError,
   TaskNotFoundError,
 } from "../src/shared/errors.ts";
+import { renderDot, renderMermaid } from "../src/ui/graph.ts";
 import {
   renderGlobalHelp,
   renderTaskHelp,
@@ -2625,5 +2626,261 @@ describe("confirm プロンプト (#14) - main --yes / -y 統合テスト", () =
 
     expect(g.__risky2TaskCalled).toBe(true);
     delete g.__risky2TaskCalled;
+  });
+});
+
+describe("parseArgs --graph フラグ", () => {
+  test("--graph 単独は default コマンドで graph=mermaid", () => {
+    const result = parseArgs(["--graph"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.graph).toBe("mermaid");
+    }
+  });
+
+  test("--graph=mermaid は default コマンドで graph=mermaid", () => {
+    const result = parseArgs(["--graph=mermaid"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.graph).toBe("mermaid");
+    }
+  });
+
+  test("--graph=dot は default コマンドで graph=dot", () => {
+    const result = parseArgs(["--graph=dot"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.graph).toBe("dot");
+    }
+  });
+
+  test("task --graph は run コマンドで graph=mermaid", () => {
+    const result = parseArgs(["build", "--graph"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.taskNames).toEqual(["build"]);
+      expect(result.flags.graph).toBe("mermaid");
+    }
+  });
+
+  test("task --graph=dot は run コマンドで graph=dot", () => {
+    const result = parseArgs(["build", "--graph=dot"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.taskNames).toEqual(["build"]);
+      expect(result.flags.graph).toBe("dot");
+    }
+  });
+
+  test("--graph なしは graph が undefined", () => {
+    const result = parseArgs(["build"]);
+    if (result.type === "run") {
+      expect(result.flags.graph).toBeUndefined();
+    }
+  });
+
+  test("未知フォーマット --graph=svg を raw 値で保持する", () => {
+    const result = parseArgs(["--graph=svg"]);
+    if (result.type === "default") {
+      expect(result.flags.graph).toBe("svg");
+    }
+  });
+});
+
+describe("graph レンダリング", () => {
+  const tasksWithDeps = [
+    { name: "clean", fn: () => {}, options: {} },
+    { name: "build", fn: () => {}, options: { deps: ["clean"] } },
+    { name: "test", fn: () => {}, options: { deps: ["build"] } },
+  ];
+
+  const isolatedTasks = [
+    { name: "lint", fn: () => {}, options: {} },
+    { name: "format", fn: () => {}, options: {} },
+  ];
+
+  test("renderMermaid は flowchart LR で始まる", () => {
+    const output = renderMermaid(tasksWithDeps);
+    expect(output.startsWith("flowchart LR")).toBe(true);
+  });
+
+  test("renderMermaid は dep --> task の辺を出力する", () => {
+    const output = renderMermaid(tasksWithDeps);
+    expect(output).toContain("clean --> build");
+    expect(output).toContain("build --> test");
+  });
+
+  test("renderMermaid は孤立ノードを個別に出力する", () => {
+    const output = renderMermaid(isolatedTasks);
+    expect(output).toContain("lint");
+    expect(output).toContain("format");
+  });
+
+  test("renderDot は digraph bake { で始まる", () => {
+    const output = renderDot(tasksWithDeps);
+    expect(output.startsWith("digraph bake {")).toBe(true);
+    expect(output.endsWith("}")).toBe(true);
+  });
+
+  test("renderDot はクォートされたエッジを出力する", () => {
+    const output = renderDot(tasksWithDeps);
+    expect(output).toContain('"clean" -> "build";');
+    expect(output).toContain('"build" -> "test";');
+  });
+
+  test("renderDot は孤立ノードを個別に出力する", () => {
+    const output = renderDot(isolatedTasks);
+    expect(output).toContain('"lint";');
+    expect(output).toContain('"format";');
+  });
+
+  test("renderMermaid: 特殊文字を含むノード名は安全にエスケープ", () => {
+    const tasks = [
+      { name: "ns:build", fn: () => {}, options: {} },
+      { name: "ns:test", fn: () => {}, options: { deps: ["ns:build"] } },
+    ];
+    const output = renderMermaid(tasks);
+    expect(output).toContain("ns_build");
+    expect(output).toContain("ns_test");
+  });
+});
+
+describe("--graph フラグ integration", () => {
+  let originalCwd: string;
+  let tempDir: string;
+  let originalExit: typeof process.exit;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve("/tmp", `overbake-graph-${Date.now()}-${Math.random()}`);
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+    originalExit = process.exit;
+    (process.exit as unknown) = () => {};
+  });
+
+  afterEach(() => {
+    process.exit = originalExit;
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("bake <task> --graph はタスク関数を実行しない", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("clean", () => { globalThis.__graphCleanCalled = true; });
+task("build", { deps: ["clean"] }, () => { globalThis.__graphBuildCalled = true; });`,
+    );
+
+    const g = globalThis as Record<string, unknown>;
+    g.__graphCleanCalled = false;
+    g.__graphBuildCalled = false;
+
+    await main(["build", "--graph"]);
+
+    expect(g.__graphCleanCalled).toBe(false);
+    expect(g.__graphBuildCalled).toBe(false);
+    delete g.__graphCleanCalled;
+    delete g.__graphBuildCalled;
+  });
+
+  test("bake <task> --graph は mermaid 形式の依存グラフを出力する", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("clean", () => {});
+task("build", { deps: ["clean"] }, () => {});`,
+    );
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+
+    await main(["build", "--graph"]);
+
+    console.log = orig;
+
+    const output = lines.join("\n");
+    expect(output).toContain("flowchart LR");
+    expect(output).toContain("clean --> build");
+  });
+
+  test("bake <task> --graph=dot は dot 形式を出力する", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("clean", () => {});
+task("build", { deps: ["clean"] }, () => {});`,
+    );
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+
+    await main(["build", "--graph=dot"]);
+
+    console.log = orig;
+
+    const output = lines.join("\n");
+    expect(output).toContain("digraph bake {");
+    expect(output).toContain('"clean" -> "build";');
+  });
+
+  test("bake --graph（タスク指定なし）は全タスクのグラフを出力する", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("lint", () => {});
+task("build", () => {});
+task("test", { deps: ["build"] }, () => {});`,
+    );
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+
+    await main(["--graph"]);
+
+    console.log = orig;
+
+    const output = lines.join("\n");
+    expect(output).toContain("flowchart LR");
+    expect(output).toContain("lint");
+    expect(output).toContain("build");
+    expect(output).toContain("test");
+  });
+
+  test("bake --graph=mermaid は mermaid 形式を出力する", async () => {
+    writeFileSync("Bakefile.ts", `task("mytask", () => {});`);
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+
+    await main(["mytask", "--graph=mermaid"]);
+
+    console.log = orig;
+
+    const output = lines.join("\n");
+    expect(output).toContain("flowchart LR");
+  });
+
+  test("未対応フォーマット --graph=svg は exit code 2 で終了する", async () => {
+    writeFileSync("Bakefile.ts", `task("build", () => {});`);
+
+    let exitCode = 0;
+    (process.exit as unknown) = (code: number) => {
+      exitCode = code;
+    };
+
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => errors.push(a.join(" "));
+
+    await main(["build", "--graph=svg"]);
+
+    console.error = origError;
+
+    expect(exitCode).toBe(2);
+    expect(errors.some((e) => e.includes("svg"))).toBe(true);
   });
 });

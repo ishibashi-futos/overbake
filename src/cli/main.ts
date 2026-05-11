@@ -14,6 +14,7 @@ import {
   printExplain,
 } from "../runtime/executor.ts";
 import { DuplicateDefaultTaskError } from "../shared/errors.ts";
+import { renderGraph } from "../ui/graph.ts";
 import {
   renderGlobalHelp,
   renderTaskHelp,
@@ -28,6 +29,15 @@ import {
   generateZshCompletion,
 } from "./completions.ts";
 import { CliError } from "./error.ts";
+
+function validateGraphFormat(format: string): void {
+  if (format !== "mermaid" && format !== "dot") {
+    throw new CliError(
+      `未対応のグラフ形式です: "${format}"。mermaid または dot を指定してください。`,
+      2,
+    );
+  }
+}
 
 export async function main(args: string[]): Promise<void> {
   try {
@@ -100,6 +110,17 @@ export async function main(args: string[]): Promise<void> {
     }
 
     if (command.type === "default") {
+      if (command.flags.graph !== undefined) {
+        validateGraphFormat(command.flags.graph);
+        const bakefile = discoverBakefile();
+        const registry = new TaskRegistry();
+        await loadBakefile(bakefile, registry);
+        console.log(
+          renderGraph(registry.all(), command.flags.graph as "mermaid" | "dot"),
+        );
+        return;
+      }
+
       const bakefile = discoverBakefile();
       const root = dirname(bakefile);
       const registry = new TaskRegistry();
@@ -165,6 +186,14 @@ export async function main(args: string[]): Promise<void> {
     }
 
     const { taskNames, flags } = command;
+
+    if (flags.graph !== undefined) {
+      validateGraphFormat(flags.graph);
+      const plan = await buildPlan(taskNames);
+      console.log(renderGraph(plan.tasks, flags.graph as "mermaid" | "dot"));
+      return;
+    }
+
     const plan = await buildPlan(taskNames);
 
     if (flags.dryRun) {

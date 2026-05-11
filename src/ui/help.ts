@@ -30,6 +30,7 @@ Options (for run):
   --dry-run              Print tasks without executing
   --explain              Show task details and dependencies
   --watch                Watch input files and re-run on changes
+  --graph[=mermaid|dot]  Print dependency graph without executing
 `;
 }
 

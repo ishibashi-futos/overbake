@@ -25,6 +25,8 @@ export interface Flags {
   verbose: boolean;
   noColor: boolean;
   yes: boolean;
+  // "mermaid" | "dot" または未知フォーマット（main.ts で検証）
+  graph?: string;
 }
 
 export interface RunCommand {
@@ -51,6 +53,16 @@ export type Command =
   | RunCommand
   | CompletionsCommand
   | CompleteCommand;
+
+// --graph / --graph=mermaid / --graph=dot などを抽出する
+function extractGraph(args: string[]): string | undefined {
+  for (const arg of args) {
+    if (arg === "--graph" || arg === "--graph=mermaid") return "mermaid";
+    if (arg === "--graph=dot") return "dot";
+    if (arg.startsWith("--graph=")) return arg.slice("--graph=".length);
+  }
+  return undefined;
+}
 
 export function parseArgs(args: string[]): Command {
   const [command] = args;
@@ -88,7 +100,9 @@ export function parseArgs(args: string[]): Command {
     command === "--verbose" ||
     command === "--no-color" ||
     command === "--yes" ||
-    command === "-y"
+    command === "-y" ||
+    command === "--graph" ||
+    command.startsWith("--graph=")
   ) {
     const flags: Flags = {
       dryRun: args.includes("--dry-run"),
@@ -99,6 +113,7 @@ export function parseArgs(args: string[]): Command {
       verbose: args.includes("--verbose"),
       noColor: args.includes("--no-color"),
       yes: args.includes("--yes") || args.includes("-y"),
+      graph: extractGraph(args),
     };
     return { type: "default", flags };
   }
@@ -140,6 +155,7 @@ export function parseArgs(args: string[]): Command {
     verbose: args.includes("--verbose"),
     noColor: args.includes("--no-color"),
     yes: args.includes("--yes") || args.includes("-y"),
+    graph: extractGraph(args),
   };
 
   return { type: "run", taskNames, flags };
