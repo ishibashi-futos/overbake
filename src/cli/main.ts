@@ -31,6 +31,7 @@ import {
   generateFishCompletion,
   generateZshCompletion,
 } from "./completions.ts";
+import { runDoctor } from "./doctor.ts";
 import { CliError } from "./error.ts";
 
 function validateGraphFormat(format: string): void {
@@ -74,6 +75,14 @@ export async function main(args: string[]): Promise<void> {
         } catch {
           // Bakefile.ts が無いか読み込み失敗の場合は何も出力しない
         }
+      }
+      return;
+    }
+
+    if (command.type === "doctor") {
+      const exitCode = await runDoctor();
+      if (exitCode !== 0) {
+        process.exit(exitCode);
       }
       return;
     }

@@ -46,6 +46,10 @@ export interface CompleteCommand {
   subcommand: string;
 }
 
+export interface DoctorCommand {
+  type: "doctor";
+}
+
 export type Command =
   | InitCommand
   | ListCommand
@@ -53,7 +57,8 @@ export type Command =
   | DefaultCommand
   | RunCommand
   | CompletionsCommand
-  | CompleteCommand;
+  | CompleteCommand
+  | DoctorCommand;
 
 // --graph / --graph=mermaid / --graph=dot などを抽出する
 function extractGraph(args: string[]): string | undefined {
@@ -70,6 +75,10 @@ export function parseArgs(args: string[]): Command {
 
   if (command === "init") {
     return { type: "init" };
+  }
+
+  if (command === "doctor") {
+    return { type: "doctor" };
   }
 
   if (command === "-l" || command === "list") {

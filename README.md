@@ -53,6 +53,10 @@ bake deploy -y
 bake "build:*"         # build: で始まるタスクを全部実行
 bake "lint:*"          # lint: で始まるタスクを全部実行
 
+# Bakefile.ts を静的検証する（タスクは実行しない）
+# 未定義 deps・循環依存・重複登録・メタタスクの矛盾などを検出
+bake doctor
+
 # タスク一覧を表示
 bake list
 bake -l

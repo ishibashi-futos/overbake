@@ -61,6 +61,7 @@ export function renderGlobalHelp(): string {
 Commands:
   init                   Initialize a new Bakefile
   -l, list               List available tasks
+  doctor                 Validate Bakefile.ts without running tasks
   --help                 Show this help message
   --help <task>          Show help for a specific task
   completions <shell>    Output shell completion script (zsh/bash/fish)

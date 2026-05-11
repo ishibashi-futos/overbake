@@ -8,6 +8,7 @@ _bake() {
     'init:Bakefile.ts を初期化する'
     'list:タスク一覧を表示する'
     'completions:シェル補完スクリプトを出力する'
+    'doctor:Bakefile.ts を検証する'
   )
 
   tasks=("\${(@f)$(bake __complete tasks 2>/dev/null)}")
@@ -46,7 +47,7 @@ export function generateBashCompletion(): string {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-  local subcommands="init list completions"
+  local subcommands="init list completions doctor"
   local flags="--help --dry-run --explain --watch --keep-going --quiet --verbose --no-color --yes -y -l"
 
   if [[ "$prev" == "completions" ]]; then
@@ -69,9 +70,10 @@ export function generateFishCompletion(): string {
 
 complete -c bake -e
 
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions' -a 'init' -d 'Bakefile.ts を初期化する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions' -a 'list' -d 'タスク一覧を表示する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions' -a 'completions' -d 'シェル補完スクリプトを出力する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor' -a 'init' -d 'Bakefile.ts を初期化する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor' -a 'list' -d 'タスク一覧を表示する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor' -a 'completions' -d 'シェル補完スクリプトを出力する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor' -a 'doctor' -d 'Bakefile.ts を検証する'
 complete -c bake -f -n '__fish_seen_subcommand_from completions' -a 'zsh bash fish'
 
 complete -c bake -l help -d 'ヘルプを表示'

@@ -17,6 +17,7 @@ import {
   generateFishCompletion,
   generateZshCompletion,
 } from "../src/cli/completions.ts";
+import { runDoctor } from "../src/cli/doctor.ts";
 import { main } from "../src/cli/main.ts";
 import { expandWildcardTargets, resolveTasks } from "../src/graph/resolver.ts";
 import { init } from "../src/init/init.ts";
@@ -2428,6 +2429,7 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
     expect(script).toContain("init");
     expect(script).toContain("list");
     expect(script).toContain("completions");
+    expect(script).toContain("doctor");
   });
 
   test("generateZshCompletion はフラグを含む", () => {
@@ -2452,6 +2454,7 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
     expect(script).toContain("init");
     expect(script).toContain("list");
     expect(script).toContain("completions");
+    expect(script).toContain("doctor");
   });
 
   test("generateFishCompletion は complete -c bake を含む", () => {
@@ -2462,6 +2465,14 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
   test("generateFishCompletion は bake __complete tasks を含む", () => {
     const script = generateFishCompletion();
     expect(script).toContain("bake __complete tasks");
+  });
+
+  test("generateFishCompletion はサブコマンドを含む", () => {
+    const script = generateFishCompletion();
+    expect(script).toContain("init");
+    expect(script).toContain("list");
+    expect(script).toContain("completions");
+    expect(script).toContain("doctor");
   });
 });
 
@@ -3564,5 +3575,278 @@ task("clean", { desc: "クリーン" }, () => {});`,
     expect(output).toContain("build:frontend");
     expect(output).toContain("build:backend");
     expect(output).toContain("clean");
+  });
+});
+
+// issue #30: bake doctor（Bakefile 静的検証）
+describe("issue #30: bake doctor - parseArgs", () => {
+  test('"doctor" を解析すると type=doctor になる', () => {
+    const result = parseArgs(["doctor"]);
+    expect(result.type).toBe("doctor");
+  });
+});
+
+describe("issue #30: bake doctor - renderGlobalHelp", () => {
+  test("renderGlobalHelp は doctor コマンドを含む", () => {
+    const output = renderGlobalHelp();
+    expect(output).toContain("doctor");
+  });
+});
+
+describe("issue #30: bake doctor - runDoctor", () => {
+  let originalCwd: string;
+  let tempDir: string;
+  let logs: string[] = [];
+  let originalLog: typeof console.log;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve("/tmp", `overbake-doctor-${Date.now()}-${Math.random()}`);
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+    logs = [];
+    originalLog = console.log;
+    console.log = (...args: string[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+  });
+
+  afterEach(() => {
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("正常な Bakefile.ts では 0 errors, 0 warnings で exit code 0 を返す", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync("Bakefile.ts", `task("build", () => {});`);
+
+    const code = await runDoctor();
+
+    expect(code).toBe(0);
+    const output = logs.join("\n");
+    expect(output).toContain("0 errors");
+    expect(output).toContain("0 warnings");
+  });
+
+  test("未定義 deps は ERROR として検出し exit code 2 を返す", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task("build", { deps: ["undefined-dep"] }, () => {});`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("undefined-dep");
+  });
+
+  test("循環依存は ERROR として検出し exit code 2 を返す", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task("a", { deps: ["b"] }, () => {});
+task("b", { deps: ["a"] }, () => {});`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("循環依存");
+  });
+
+  test("重複タスク登録は ERROR として検出し exit code 2 を返す", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task("build", () => {});
+task("build", () => {});`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("already defined");
+  });
+
+  test("メタタスクに outputs が指定されている場合は ERROR として検出し exit code 2 を返す", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync("Bakefile.ts", `task("meta-task", { outputs: ["dist"] });`);
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("meta-task");
+    expect(output).toContain("outputs");
+  });
+
+  test("inputs glob が 0 件マッチの場合は WARN として検出し exit code 0 を返す", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task("build", { inputs: ["nonexistent/**/*.ts"] }, () => {});`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(0);
+    const output = logs.join("\n");
+    expect(output).toContain("WARN");
+    expect(output).toContain("0 件");
+    expect(output).toContain("0 errors");
+  });
+
+  test(".gitignore が無い場合は WARN として検出し exit code 0 を返す", async () => {
+    writeFileSync("Bakefile.ts", `task("build", () => {});`);
+
+    const code = await runDoctor();
+
+    expect(code).toBe(0);
+    const output = logs.join("\n");
+    expect(output).toContain("WARN");
+    expect(output).toContain(".gitignore");
+    expect(output).toContain("0 errors");
+  });
+
+  test(".gitignore に .overbake/ が無い場合は WARN として検出し exit code 0 を返す", async () => {
+    writeFileSync(".gitignore", "node_modules/\n");
+    writeFileSync("Bakefile.ts", `task("build", () => {});`);
+
+    const code = await runDoctor();
+
+    expect(code).toBe(0);
+    const output = logs.join("\n");
+    expect(output).toContain("WARN");
+    expect(output).toContain(".overbake/");
+    expect(output).toContain("0 errors");
+  });
+
+  test("Bakefile.ts が無い場合は ERROR として検出し exit code 2 を返す", async () => {
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+  });
+
+  test("error が複数ある場合も全件表示する", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task("build", { deps: ["missing1"] }, () => {});
+task("test", { deps: ["missing2"] }, () => {});`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("missing1");
+    expect(output).toContain("missing2");
+  });
+
+  test("wildcard を含む deps は未対応なので ERROR として検出し exit code 2 を返す", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task("deploy", { deps: ["build:*"] }, () => {});`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("build:*");
+  });
+});
+
+describe("issue #30: bake doctor - main 統合テスト", () => {
+  let originalCwd: string;
+  let tempDir: string;
+  let logs: string[] = [];
+  let errors: string[] = [];
+  let originalLog: typeof console.log;
+  let originalError: typeof console.error;
+  let originalExit: typeof process.exit;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-doctor-main-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+    logs = [];
+    errors = [];
+    originalLog = console.log;
+    originalError = console.error;
+    originalExit = process.exit;
+    console.log = (...args: string[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+    console.error = (...args: string[]) => {
+      errors.push(args.join(" "));
+    };
+    (process.exit as unknown) = () => {};
+  });
+
+  afterEach(() => {
+    console.log = originalLog;
+    console.error = originalError;
+    process.exit = originalExit;
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("main doctor は正常な Bakefile.ts で 0 errors を出力する", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync("Bakefile.ts", `task("build", () => {});`);
+
+    let exitCode: number | undefined;
+    (process.exit as unknown) = (code?: number) => {
+      exitCode = code;
+    };
+
+    await main(["doctor"]);
+
+    const output = logs.join("\n");
+    expect(output).toContain("0 errors");
+    expect(exitCode).toBeUndefined();
+  });
+
+  test("main doctor はエラーがある場合に exit code 2 で終了する", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task("build", { deps: ["no-such-task"] }, () => {});`,
+    );
+
+    let exitCode: number | undefined;
+    (process.exit as unknown) = (code?: number) => {
+      exitCode = code;
+    };
+
+    await main(["doctor"]);
+
+    expect(exitCode).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
   });
 });
