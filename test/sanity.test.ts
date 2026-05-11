@@ -26,6 +26,7 @@ import { runWithHooks } from "../src/runtime/hooks.ts";
 import {
   BakefileNotFoundError,
   CircularDependencyError,
+  DuplicateDefaultTaskError,
   DuplicateTaskError,
   TaskNotFoundError,
 } from "../src/shared/errors.ts";
@@ -51,8 +52,14 @@ describe("parseArgs", () => {
     }
   });
 
-  test("throws error when no command provided", () => {
-    expect(() => parseArgs([])).toThrow("No command provided");
+  test("returns default command when no args provided", () => {
+    const result = parseArgs([]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.dryRun).toBe(false);
+      expect(result.flags.explain).toBe(false);
+      expect(result.flags.watch).toBe(false);
+    }
   });
 
   test("--dry-run フラグを解析する", () => {
@@ -182,6 +189,32 @@ describe("TaskRegistry", () => {
     expect(all.length).toBe(2);
     expect(all.map((t) => t.name)).toContain("task1");
     expect(all.map((t) => t.name)).toContain("task2");
+  });
+
+  test("sets and gets default task", () => {
+    const registry = new TaskRegistry();
+    registry.register("build", () => {});
+    registry.setDefault("build");
+
+    expect(registry.getDefault()).toBe("build");
+  });
+
+  test("throws DuplicateDefaultTaskError when setting default twice", () => {
+    const registry = new TaskRegistry();
+    registry.register("build", () => {});
+    registry.register("clean", () => {});
+
+    registry.setDefault("build");
+    expect(() => registry.setDefault("clean")).toThrow(
+      DuplicateDefaultTaskError,
+    );
+  });
+
+  test("getDefault returns undefined when no default is set", () => {
+    const registry = new TaskRegistry();
+    registry.register("task1", () => {});
+
+    expect(registry.getDefault()).toBeUndefined();
   });
 });
 
@@ -316,6 +349,51 @@ describe("loadBakefile", () => {
     expect(task?.name).toBe("mytask");
     expect(task?.options?.desc).toBe("Test");
   });
+
+  test("sets default task via task.default()", async () => {
+    const bakefilePath = resolve(tempDir, "test-bakefile.ts");
+    writeFileSync(
+      bakefilePath,
+      `task("build", () => {});
+task.default("build");`,
+    );
+
+    const registry = new TaskRegistry();
+    await loadBakefile(bakefilePath, registry);
+
+    expect(registry.getDefault()).toBe("build");
+  });
+
+  test("throws DuplicateDefaultTaskError when default called twice", async () => {
+    const bakefilePath = resolve(tempDir, "test-bakefile.ts");
+    writeFileSync(
+      bakefilePath,
+      `task("build", () => {});
+task("clean", () => {});
+task.default("build");
+task.default("clean");`,
+    );
+
+    const registry = new TaskRegistry();
+
+    expect(async () => {
+      await loadBakefile(bakefilePath, registry);
+    }).toThrow();
+  });
+
+  test("restores globalThis.task.default after successful import", async () => {
+    const bakefilePath = resolve(tempDir, "test-bakefile.ts");
+    writeFileSync(bakefilePath, 'export default "test";');
+
+    const registry = new TaskRegistry();
+
+    const taskBeforeLoad = (globalThis as Record<string, unknown>).task;
+
+    await loadBakefile(bakefilePath, registry);
+
+    // task.default should be restored
+    expect((globalThis as Record<string, unknown>).task).toBe(taskBeforeLoad);
+  });
 });
 
 describe("init", () => {
@@ -372,13 +450,24 @@ describe("init", () => {
     const content = readFileSync("Bakefile.d.ts", "utf-8");
     expect(content).toContain("declare function task");
   });
+
+  test("generated Bakefile.d.ts declares task.default function", async () => {
+    await init();
+
+    const content = readFileSync("Bakefile.d.ts", "utf-8");
+    expect(content).toContain("function default");
+    expect(content).toContain("declare namespace task");
+  });
 });
 
 describe("CLI integration", () => {
   let originalCwd: string;
   let tempDir: string;
   let logs: string[] = [];
+  let errors: string[] = [];
   let originalLog: typeof console.log;
+  let originalError: typeof console.error;
+  let originalExit: typeof process.exit;
 
   beforeEach(() => {
     originalCwd = process.cwd();
@@ -387,15 +476,29 @@ describe("CLI integration", () => {
     process.chdir(tempDir);
 
     logs = [];
+    errors = [];
     originalLog = console.log;
+    originalError = console.error;
+    originalExit = process.exit;
+
     console.log = (...args: string[]) => {
       logs.push(args.join(" "));
       originalLog(...args);
+    };
+
+    console.error = (...args: string[]) => {
+      errors.push(args.join(" "));
+    };
+
+    (process.exit as unknown) = () => {
+      // mock: do nothing
     };
   });
 
   afterEach(() => {
     console.log = originalLog;
+    console.error = originalError;
+    process.exit = originalExit;
     process.chdir(originalCwd);
     if (existsSync(tempDir)) {
       rmSync(tempDir, { recursive: true });
@@ -546,6 +649,77 @@ task("check-paths", (ctx) => {
 
     expect(realpathSync(g.capturedCwd as string)).toBe(realpathSync(subDir));
     expect(realpathSync(g.capturedRoot as string)).toBe(realpathSync(tempDir));
+  });
+
+  test("default task execution with task.default()", async () => {
+    const bakefileContent = `
+task("build", () => {
+  console.log("build executed");
+});
+
+task("clean", () => {
+  console.log("clean executed");
+});
+
+task.default("build");
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main([]);
+
+    const taskLogs = logs.filter((log) => log.includes("executed"));
+    expect(taskLogs).toContain("build executed");
+    expect(taskLogs).not.toContain("clean executed");
+  });
+
+  test("bake with no args shows task list when no default", async () => {
+    const bakefileContent = `
+task("build", { desc: "Build project" }, () => {});
+task("clean", { desc: "Clean build" }, () => {});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main([]);
+
+    const output = logs.join("\n");
+    expect(output).toContain("build");
+    expect(output).toContain("clean");
+  });
+
+  test("default task respects --dry-run flag", async () => {
+    const bakefileContent = `
+task("mytask", () => {
+  globalThis.__defaultDryRunCalled = true;
+});
+
+task.default("mytask");
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const g = globalThis as Record<string, unknown>;
+    g.__defaultDryRunCalled = false;
+    await main(["--dry-run"]);
+    expect(g.__defaultDryRunCalled).toBe(false);
+  });
+
+  test("default task respects --explain flag", async () => {
+    const bakefileContent = `
+task("explained", { desc: "Task for explain" }, () => {
+  globalThis.__defaultExplainCalled = true;
+});
+
+task.default("explained");
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const g = globalThis as Record<string, unknown>;
+    g.__defaultExplainCalled = false;
+    await main(["--explain"]);
+    expect(g.__defaultExplainCalled).toBe(false);
   });
 });
 
@@ -1184,6 +1358,30 @@ describe("parseArgs - list/help commands", () => {
       expect(result.taskName).toBe("build");
     }
   });
+
+  test("parses default command with --dry-run flag", () => {
+    const result = parseArgs(["--dry-run"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.dryRun).toBe(true);
+    }
+  });
+
+  test("parses default command with --explain flag", () => {
+    const result = parseArgs(["--explain"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.explain).toBe(true);
+    }
+  });
+
+  test("parses default command with --watch flag", () => {
+    const result = parseArgs(["--watch"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.watch).toBe(true);
+    }
+  });
 });
 
 describe("UI help rendering", () => {
@@ -1405,5 +1603,33 @@ task("format", {
     const output = logs.join("\n");
     expect(output).toContain("format");
     expect(output).toContain("Format code");
+  });
+
+  test("duplicate default task definition is caught at Bakefile load time", async () => {
+    const bakefileContent = `
+task("build", () => {});
+task("clean", () => {});
+
+task.default("build");
+task.default("clean");
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const originalExit = process.exit;
+    let exitCode: number | undefined;
+    (process.exit as unknown) = (code?: number) => {
+      exitCode = code;
+    };
+
+    try {
+      await main([]);
+    } finally {
+      process.exit = originalExit;
+    }
+
+    expect(exitCode).toBe(2);
+    const output = errors.join("\n");
+    expect(output).toContain("Default task is already set");
   });
 });

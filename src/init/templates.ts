@@ -50,5 +50,9 @@ declare function task(name: string, fn: TaskFn): void;
 declare function task(name: string, opts: TaskOptions, fn: TaskFn): void;
 declare function task(name: string, opts: TaskOptions): void;
 
+declare namespace task {
+  function default(name: string): void;
+}
+
 declare const argv: readonly string[];
 `;

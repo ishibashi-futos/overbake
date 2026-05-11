@@ -11,6 +11,11 @@ export interface HelpCommand {
   taskName?: string;
 }
 
+export interface DefaultCommand {
+  type: "default";
+  flags: Flags;
+}
+
 export interface Flags {
   dryRun: boolean;
   explain: boolean;
@@ -23,7 +28,12 @@ export interface RunCommand {
   flags: Flags;
 }
 
-export type Command = InitCommand | ListCommand | HelpCommand | RunCommand;
+export type Command =
+  | InitCommand
+  | ListCommand
+  | HelpCommand
+  | DefaultCommand
+  | RunCommand;
 
 export function parseArgs(args: string[]): Command {
   const [command] = args;
@@ -41,8 +51,18 @@ export function parseArgs(args: string[]): Command {
     return { type: "help", taskName };
   }
 
-  if (!command) {
-    throw new Error("No command provided");
+  if (
+    !command ||
+    command === "--dry-run" ||
+    command === "--explain" ||
+    command === "--watch"
+  ) {
+    const flags: Flags = {
+      dryRun: args.includes("--dry-run"),
+      explain: args.includes("--explain"),
+      watch: args.includes("--watch"),
+    };
+    return { type: "default", flags };
   }
 
   const helpIndex = args.indexOf("--help");

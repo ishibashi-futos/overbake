@@ -1,15 +1,19 @@
 #!/usr/bin/env bun
 
+import { dirname } from "node:path";
 import { discoverBakefile } from "../bakefile/discover.ts";
 import { loadBakefile } from "../bakefile/loader.ts";
 import { TaskRegistry } from "../bakefile/registry.ts";
+import { resolveTasks } from "../graph/resolver.ts";
 import { init } from "../init/init.ts";
 import {
   buildPlan,
+  type ExecutionPlan,
   executePlan,
   printDryRun,
   printExplain,
 } from "../runtime/executor.ts";
+import { DuplicateDefaultTaskError } from "../shared/errors.ts";
 import {
   renderGlobalHelp,
   renderTaskHelp,
@@ -58,6 +62,48 @@ export async function main(args: string[]): Promise<void> {
       return;
     }
 
+    if (command.type === "default") {
+      const bakefile = discoverBakefile();
+      const root = dirname(bakefile);
+      const registry = new TaskRegistry();
+      await loadBakefile(bakefile, registry);
+      const defaultTaskName = registry.getDefault();
+
+      if (!defaultTaskName) {
+        const tasks = registry.all();
+        console.log(renderTaskList(tasks));
+        return;
+      }
+
+      // Build plan using already-loaded registry to avoid dynamic import cache issues
+      const tasks = resolveTasks(defaultTaskName, registry.all());
+      const plan: ExecutionPlan = { bakefile, root, tasks };
+
+      if (command.flags.dryRun) {
+        printDryRun(plan);
+        return;
+      }
+
+      if (command.flags.explain) {
+        printExplain(plan);
+        return;
+      }
+
+      if (command.flags.watch) {
+        await executePlan(plan);
+        const paths = collectWatchPaths(plan.tasks, plan.bakefile);
+        console.log(`Watching: ${paths.join(", ")}`);
+        startWatch(paths, async () => {
+          await executePlan(plan);
+        });
+        await new Promise<void>(() => {});
+        return;
+      }
+
+      await executePlan(plan);
+      return;
+    }
+
     const { taskName, flags } = command;
     const plan = await buildPlan(taskName);
 
@@ -87,7 +133,12 @@ export async function main(args: string[]): Promise<void> {
     await executePlan(plan);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    const exitCode = error instanceof CliError ? error.exitCode : 1;
+    let exitCode = 1;
+    if (error instanceof CliError) {
+      exitCode = error.exitCode;
+    } else if (error instanceof DuplicateDefaultTaskError) {
+      exitCode = 2;
+    }
     process.exit(exitCode);
   }
 }

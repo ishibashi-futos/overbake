@@ -1,8 +1,12 @@
-import { DuplicateTaskError } from "../shared/errors.ts";
+import {
+  DuplicateDefaultTaskError,
+  DuplicateTaskError,
+} from "../shared/errors.ts";
 import type { TaskDefinition, TaskFunction, TaskOptions } from "../types.ts";
 
 export class TaskRegistry {
   private tasks = new Map<string, TaskDefinition>();
+  private defaultTaskName: string | undefined;
 
   register(
     name: string,
@@ -43,5 +47,16 @@ export class TaskRegistry {
 
   all(): TaskDefinition[] {
     return Array.from(this.tasks.values());
+  }
+
+  setDefault(name: string): void {
+    if (this.defaultTaskName !== undefined) {
+      throw new DuplicateDefaultTaskError();
+    }
+    this.defaultTaskName = name;
+  }
+
+  getDefault(): string | undefined {
+    return this.defaultTaskName;
   }
 }

@@ -25,3 +25,10 @@ export class CircularDependencyError extends Error {
     this.name = "CircularDependencyError";
   }
 }
+
+export class DuplicateDefaultTaskError extends Error {
+  constructor() {
+    super("Default task is already set");
+    this.name = "DuplicateDefaultTaskError";
+  }
+}
