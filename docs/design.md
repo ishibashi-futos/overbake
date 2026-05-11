@@ -44,9 +44,9 @@ Overbake のスイートスポット: **Bun を採用している中小規模プ
 - [ ] cwd から上方向に `Bakefile.ts` を自動探索
 - [ ] `deps` による DAG 解決と並列実行
 - [ ] コンテンツハッシュベースのインクリメンタルビルド (`inputs` / `outputs`)
-- [ ] `--watch` モードで該当タスクのみ再実行
+- [x] `--watch` モードで該当タスクのみ再実行
 - [x] `bake init` で初期化、`Bakefile.d.ts` を生成
-- [ ] `--dry-run` / `--explain` でデバッグ可能
+- [x] `--dry-run` / `--explain` でデバッグ可能
 
 ### 2.2 非ゴール (MVP では扱わない)
 

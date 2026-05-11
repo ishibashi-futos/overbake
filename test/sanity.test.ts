@@ -16,11 +16,18 @@ import { main } from "../src/cli/main.ts";
 import { resolveTasks } from "../src/graph/resolver.ts";
 import { init } from "../src/init/init.ts";
 import {
+  buildPlan,
+  executePlan,
+  printDryRun,
+  printExplain,
+} from "../src/runtime/executor.ts";
+import {
   BakefileNotFoundError,
   CircularDependencyError,
   DuplicateTaskError,
   TaskNotFoundError,
 } from "../src/shared/errors.ts";
+import { collectWatchPaths, startWatch } from "../src/watch/watcher.ts";
 
 describe("parseArgs", () => {
   test('parses "init" command', () => {
@@ -38,6 +45,45 @@ describe("parseArgs", () => {
 
   test("throws error when no command provided", () => {
     expect(() => parseArgs([])).toThrow("No command provided");
+  });
+
+  test("--dry-run フラグを解析する", () => {
+    const result = parseArgs(["build", "--dry-run"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.dryRun).toBe(true);
+      expect(result.flags.explain).toBe(false);
+      expect(result.flags.watch).toBe(false);
+    }
+  });
+
+  test("--explain フラグを解析する", () => {
+    const result = parseArgs(["build", "--explain"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.explain).toBe(true);
+      expect(result.flags.dryRun).toBe(false);
+      expect(result.flags.watch).toBe(false);
+    }
+  });
+
+  test("--watch フラグを解析する", () => {
+    const result = parseArgs(["build", "--watch"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.watch).toBe(true);
+      expect(result.flags.dryRun).toBe(false);
+      expect(result.flags.explain).toBe(false);
+    }
+  });
+
+  test("フラグなしは全て false", () => {
+    const result = parseArgs(["build"]);
+    if (result.type === "run") {
+      expect(result.flags.dryRun).toBe(false);
+      expect(result.flags.explain).toBe(false);
+      expect(result.flags.watch).toBe(false);
+    }
   });
 });
 
@@ -492,5 +538,348 @@ task("check-paths", (ctx) => {
 
     expect(realpathSync(g.capturedCwd as string)).toBe(realpathSync(subDir));
     expect(realpathSync(g.capturedRoot as string)).toBe(realpathSync(tempDir));
+  });
+});
+
+describe("dry-run / explain", () => {
+  let originalCwd: string;
+  let tempDir: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve("/tmp", `overbake-test-${Date.now()}-${Math.random()}`);
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("printDryRun はタスク名を出力しタスク関数を実行しない", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("a", () => {}); task("b", { deps: ["a"] }, () => {});`,
+    );
+    const plan = await buildPlan("b");
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+    printDryRun(plan);
+    console.log = orig;
+    expect(lines.some((l) => l.includes("a"))).toBe(true);
+    expect(lines.some((l) => l.includes("b"))).toBe(true);
+  });
+
+  test("printExplain は desc/deps/inputs/outputs/env を出力しタスク関数を実行しない", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("build", { desc: "compile", deps: [], inputs: ["src/**"], outputs: ["dist"], env: ["NODE_ENV"] }, () => {});`,
+    );
+    const plan = await buildPlan("build");
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+    printExplain(plan);
+    console.log = orig;
+    expect(lines.some((l) => l.includes("compile"))).toBe(true);
+    expect(lines.some((l) => l.includes("src/**"))).toBe(true);
+    expect(lines.some((l) => l.includes("dist"))).toBe(true);
+    expect(lines.some((l) => l.includes("NODE_ENV"))).toBe(true);
+  });
+
+  test("main --dry-run はタスク関数を呼ばない", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("mytask", () => { globalThis.__dryRunCalled = true; });`,
+    );
+    const g = globalThis as Record<string, unknown>;
+    g.__dryRunCalled = false;
+    await main(["mytask", "--dry-run"]);
+    expect(g.__dryRunCalled).toBe(false);
+  });
+
+  test("main --explain はタスク関数を呼ばない", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("mytask", () => { globalThis.__explainCalled = true; });`,
+    );
+    const g = globalThis as Record<string, unknown>;
+    g.__explainCalled = false;
+    await main(["mytask", "--explain"]);
+    expect(g.__explainCalled).toBe(false);
+  });
+});
+
+describe("collectWatchPaths", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = resolve(
+      "/tmp",
+      `overbake-watch-test-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("inputs が指定されている場合は絶対パス化して返す", () => {
+    const srcDir = resolve(tempDir, "src");
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(resolve(srcDir, "a.ts"), "");
+    writeFileSync(resolve(srcDir, "b.ts"), "");
+
+    const bakefilePath = resolve(tempDir, "Bakefile.ts");
+    const tasks = [
+      {
+        name: "a",
+        fn: () => {},
+        options: { inputs: ["src/a.ts", "src/b.ts"] },
+      },
+      {
+        name: "b",
+        fn: () => {},
+        options: { inputs: ["src/b.ts", "src/c.ts"] },
+      },
+    ];
+    const result = collectWatchPaths(tasks, bakefilePath);
+
+    // 相対パスが絶対パスに変換される
+    expect(result).toContain(srcDir);
+    expect(result.every((p) => p.startsWith("/"))).toBe(true);
+  });
+
+  test("inputs が全タスクで未指定なら Bakefile.ts を返す", () => {
+    const bakefilePath = resolve(tempDir, "Bakefile.ts");
+    writeFileSync(bakefilePath, "");
+
+    const tasks = [
+      { name: "a", fn: () => {}, options: {} },
+      { name: "b", fn: () => {}, options: {} },
+    ];
+    const result = collectWatchPaths(tasks, bakefilePath);
+    expect(result).toEqual([bakefilePath]);
+  });
+
+  test("inputs の重複は除去される", () => {
+    const srcDir = resolve(tempDir, "src");
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(resolve(srcDir, "shared.ts"), "");
+
+    const bakefilePath = resolve(tempDir, "Bakefile.ts");
+    const tasks = [
+      { name: "a", fn: () => {}, options: { inputs: ["src/shared.ts"] } },
+      { name: "b", fn: () => {}, options: { inputs: ["src/shared.ts"] } },
+    ];
+    const result = collectWatchPaths(tasks, bakefilePath);
+    expect(result.length).toBe(1);
+    expect(result[0]).toBe(srcDir);
+  });
+
+  test("glob パターン src/**/*.ts は src ディレクトリを監視対象にする", () => {
+    const srcDir = resolve(tempDir, "src");
+    mkdirSync(srcDir, { recursive: true });
+
+    const bakefilePath = resolve(tempDir, "Bakefile.ts");
+    const tasks = [
+      { name: "build", fn: () => {}, options: { inputs: ["src/**/*.ts"] } },
+    ];
+    const result = collectWatchPaths(tasks, bakefilePath);
+
+    expect(result).toEqual([srcDir]);
+  });
+
+  test("glob より前のディレクトリが存在しない場合はルートを監視対象にする", () => {
+    const bakefilePath = resolve(tempDir, "Bakefile.ts");
+    const tasks = [
+      {
+        name: "build",
+        fn: () => {},
+        options: { inputs: ["nonexistent/**/*.ts"] },
+      },
+    ];
+    const result = collectWatchPaths(tasks, bakefilePath);
+
+    expect(result).toEqual([tempDir]);
+  });
+
+  test("サブディレクトリから実行した場合も絶対パスで正規化される", () => {
+    const srcDir = resolve(tempDir, "src");
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(resolve(srcDir, "main.ts"), "");
+
+    const bakefilePath = resolve(tempDir, "Bakefile.ts");
+    writeFileSync(bakefilePath, "");
+
+    const subDir = resolve(tempDir, "work");
+    mkdirSync(subDir, { recursive: true });
+
+    // サブディレクトリから実行すると仮定
+    const originalCwd = process.cwd();
+    process.chdir(subDir);
+
+    const tasks = [
+      { name: "build", fn: () => {}, options: { inputs: ["src/main.ts"] } },
+    ];
+
+    try {
+      const result = collectWatchPaths(tasks, bakefilePath);
+
+      // 相対パスの src/main.ts が bakefilePath ルート基準の /p/src に正規化される
+      expect(result).toEqual([srcDir]);
+      expect(result[0]).toStrictEqual(srcDir);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+});
+
+describe("startWatch", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = resolve(
+      "/tmp",
+      `overbake-watch-test-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("ファイル変更時に callback が呼ばれる", async () => {
+    const file = resolve(tempDir, "watched.ts");
+    writeFileSync(file, "initial");
+
+    let callCount = 0;
+    const stop = startWatch(
+      [file],
+      async () => {
+        callCount++;
+      },
+      50,
+    );
+
+    writeFileSync(file, "changed");
+
+    // debounce + ファイルシステムイベント待機
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+
+    expect(callCount).toBeGreaterThanOrEqual(1);
+  });
+
+  test("stop() を呼ぶと以降の変更で callback が呼ばれない", async () => {
+    const file = resolve(tempDir, "stopped.ts");
+    writeFileSync(file, "initial");
+
+    let callCount = 0;
+    const stop = startWatch(
+      [file],
+      async () => {
+        callCount++;
+      },
+      50,
+    );
+    stop();
+
+    writeFileSync(file, "changed after stop");
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(callCount).toBe(0);
+  });
+
+  test("ネストされたディレクトリ内のファイル変更時に callback が呼ばれる", async () => {
+    const srcDir = resolve(tempDir, "src");
+    const nestedDir = resolve(srcDir, "nested");
+    mkdirSync(nestedDir, { recursive: true });
+    const nestedFile = resolve(nestedDir, "file.ts");
+    writeFileSync(nestedFile, "initial");
+
+    let callCount = 0;
+    const stop = startWatch(
+      [srcDir],
+      async () => {
+        callCount++;
+      },
+      50,
+    );
+
+    writeFileSync(nestedFile, "changed");
+
+    // debounce + ファイルシステムイベント待機
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+
+    expect(callCount).toBeGreaterThanOrEqual(1);
+  });
+
+  test("同じ plan を複数回実行できる（watch 再実行用）", async () => {
+    const tempDir2 = resolve(
+      "/tmp",
+      `overbake-plan-reuse-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir2, { recursive: true });
+
+    const bakefileContent = `
+task("step1", async (ctx) => {
+  ctx.log("step1 done");
+});
+
+task("step2", { deps: ["step1"] }, async (ctx) => {
+  ctx.log("step2 done");
+});
+`;
+
+    const bakefilePath = resolve(tempDir2, "Bakefile.ts");
+    writeFileSync(bakefilePath, bakefileContent);
+
+    const originalCwd = process.cwd();
+    process.chdir(tempDir2);
+
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => logs.push(a.join(" "));
+
+    try {
+      const plan = await buildPlan("step2");
+
+      // plan を複数回実行できることを確認
+      // 初回実行
+      await executePlan(plan);
+      const firstRunLogs = logs.length;
+
+      // 再実行
+      await executePlan(plan);
+      const secondRunLogs = logs.length - firstRunLogs;
+
+      // 両回で同じタスク数が実行されることを確認
+      expect(secondRunLogs).toBe(firstRunLogs);
+
+      // 各ステップが複数回実行されたことを確認
+      const step1Logs = logs.filter((l) => l.includes("step1 done"));
+      const step2Logs = logs.filter((l) => l.includes("step2 done"));
+
+      expect(step1Logs.length).toBeGreaterThanOrEqual(2);
+      expect(step2Logs.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      console.log = orig;
+      process.chdir(originalCwd);
+      if (existsSync(tempDir2)) {
+        rmSync(tempDir2, { recursive: true });
+      }
+    }
   });
 });
