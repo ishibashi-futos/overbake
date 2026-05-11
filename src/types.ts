@@ -5,6 +5,7 @@ export interface TaskOptions {
   outputs?: string[];
   env?: string[];
   confirm?: string | string[];
+  platforms?: NodeJS.Platform[];
   before?: (ctx: HookContext) => void | Promise<void>;
   after?: (
     ctx: HookContext & { ok: boolean; durationMs: number },

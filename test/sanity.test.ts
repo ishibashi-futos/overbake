@@ -3282,6 +3282,200 @@ describe("issue #21: renderTaskList グルーピング表示", () => {
   });
 });
 
+describe("issue #23: platform-specific tasks", () => {
+  let originalCwd: string;
+  let tempDir: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-platform-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("platforms に含まれないプラットフォームではタスクをスキップする", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("platform-task", { platforms: ["linux"] }, () => { globalThis.__platformTaskCalled = true; });`,
+    );
+    const g = globalThis as Record<string, unknown>;
+    g.__platformTaskCalled = false;
+
+    const plan = await buildPlan("platform-task");
+    await executePlan(plan, { platform: "darwin", noSummary: true });
+
+    expect(g.__platformTaskCalled).toBe(false);
+    delete g.__platformTaskCalled;
+  });
+
+  test("platforms に含まれるプラットフォームではタスクを実行する", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("darwin-task", { platforms: ["darwin"] }, () => { globalThis.__darwinTaskCalled = true; });`,
+    );
+    const g = globalThis as Record<string, unknown>;
+    g.__darwinTaskCalled = false;
+
+    const plan = await buildPlan("darwin-task");
+    await executePlan(plan, { platform: "darwin", noSummary: true });
+
+    expect(g.__darwinTaskCalled).toBe(true);
+    delete g.__darwinTaskCalled;
+  });
+
+  test("スキップログに platforms の理由が含まれる", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("skip-reason-task", { platforms: ["darwin"] }, () => {});`,
+    );
+
+    const plan = await buildPlan("skip-reason-task");
+    const logLines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => logLines.push(a.join(" "));
+
+    try {
+      await executePlan(plan, { platform: "linux", noSummary: true });
+    } finally {
+      console.log = orig;
+    }
+
+    expect(
+      logLines.some((l) => l.includes("skipped") && l.includes("darwin")),
+    ).toBe(true);
+  });
+
+  test("deps 経由で platforms 対象外タスクが含まれても後続タスクは実行される", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("platform-dep", { platforms: ["linux"] }, () => { globalThis.__depCalled = true; });
+task("dependent", { deps: ["platform-dep"] }, () => { globalThis.__depTaskCalled = true; });`,
+    );
+    const g = globalThis as Record<string, unknown>;
+    g.__depCalled = false;
+    g.__depTaskCalled = false;
+
+    const plan = await buildPlan("dependent");
+    await executePlan(plan, { platform: "darwin", noSummary: true });
+
+    expect(g.__depCalled).toBe(false);
+    expect(g.__depTaskCalled).toBe(true);
+    delete g.__depCalled;
+    delete g.__depTaskCalled;
+  });
+
+  test("platforms 対象外では before/after hooks および fn を呼ばない", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("hook-task", {
+  platforms: ["linux"],
+  before: async () => { globalThis.__hookBeforeCalled = true; },
+  after: async () => { globalThis.__hookAfterCalled = true; },
+}, () => { globalThis.__hookFnCalled = true; });`,
+    );
+    const g = globalThis as Record<string, unknown>;
+    g.__hookBeforeCalled = false;
+    g.__hookAfterCalled = false;
+    g.__hookFnCalled = false;
+
+    const plan = await buildPlan("hook-task");
+    await executePlan(plan, { platform: "darwin", noSummary: true });
+
+    expect(g.__hookBeforeCalled).toBe(false);
+    expect(g.__hookAfterCalled).toBe(false);
+    expect(g.__hookFnCalled).toBe(false);
+    delete g.__hookBeforeCalled;
+    delete g.__hookAfterCalled;
+    delete g.__hookFnCalled;
+  });
+
+  test("printExplain で platforms と skip 理由が表示される", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("explain-task", { platforms: ["darwin"] }, () => {});`,
+    );
+    const plan = await buildPlan("explain-task");
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+
+    printExplain(plan, { platform: "linux" });
+
+    console.log = orig;
+    expect(
+      lines.some((l) => l.includes("platforms") && l.includes("darwin")),
+    ).toBe(true);
+    expect(lines.some((l) => l.includes("skip reason"))).toBe(true);
+  });
+
+  test("printExplain で実行対象プラットフォームでは skip 理由を表示しない", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("no-skip-task", { platforms: ["darwin"] }, () => {});`,
+    );
+    const plan = await buildPlan("no-skip-task");
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+
+    printExplain(plan, { platform: "darwin" });
+
+    console.log = orig;
+    expect(
+      lines.some((l) => l.includes("platforms") && l.includes("darwin")),
+    ).toBe(true);
+    expect(lines.some((l) => l.includes("skip reason"))).toBe(false);
+  });
+
+  test("renderTaskList で platforms 情報が表示される", () => {
+    const tasks = [
+      {
+        name: "open-finder",
+        fn: () => {},
+        options: {
+          platforms: ["darwin"] as NodeJS.Platform[],
+          desc: "Finder を開く",
+        },
+      },
+      { name: "all-platforms", fn: () => {}, options: {} },
+    ];
+    const output = renderTaskList(tasks);
+    expect(output).toContain("darwin only");
+    expect(output).not.toMatch(/all-platforms.*only/);
+  });
+
+  test("スキップされたタスクはサマリーで skipped ステータスになる", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("skipped-task", { platforms: ["linux"] }, () => {});`,
+    );
+
+    const plan = await buildPlan("skipped-task");
+    const summaryLines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => summaryLines.push(a.join(" "));
+
+    try {
+      await executePlan(plan, { platform: "darwin" });
+    } finally {
+      console.log = orig;
+    }
+
+    const summaryOutput = summaryLines.join("\n");
+    expect(summaryOutput).toContain("skipped");
+  });
+});
+
 describe("issue #21: ワイルドカード CLI 統合テスト", () => {
   let originalCwd: string;
   let tempDir: string;

@@ -29,7 +29,12 @@ export function renderTaskList(tasks: TaskDefinition[]): string {
   for (const task of ungrouped) {
     const paddedName = task.name.padEnd(maxNameLength);
     const desc = task.options?.desc ? ` - ${task.options.desc}` : "";
-    lines.push(`  ${paddedName}${desc}`);
+    const platforms = task.options?.platforms;
+    const platformsStr =
+      platforms && platforms.length > 0
+        ? ` (${platforms.join(", ")} only)`
+        : "";
+    lines.push(`  ${paddedName}${desc}${platformsStr}`);
   }
 
   // `:` プレフィックスでグループ表示
@@ -38,7 +43,12 @@ export function renderTaskList(tasks: TaskDefinition[]): string {
     for (const task of groupTasks) {
       const paddedName = task.name.padEnd(maxNameLength);
       const desc = task.options?.desc ? ` - ${task.options.desc}` : "";
-      lines.push(`  ${paddedName}${desc}`);
+      const platforms = task.options?.platforms;
+      const platformsStr =
+        platforms && platforms.length > 0
+          ? ` (${platforms.join(", ")} only)`
+          : "";
+      lines.push(`  ${paddedName}${desc}${platformsStr}`);
     }
   }
 
@@ -82,6 +92,11 @@ export function renderTaskHelp(task: TaskDefinition): string {
 
   const env = task.options?.env ?? [];
   lines.push(`Environment: ${env.length > 0 ? env.join(", ") : "(none)"}`);
+
+  const platforms = task.options?.platforms ?? [];
+  lines.push(
+    `Platforms: ${platforms.length > 0 ? platforms.join(", ") : "(all)"}`,
+  );
 
   return lines.join("\n");
 }

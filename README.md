@@ -120,6 +120,7 @@ task.default("build");
 | `outputs` | タスク出力ファイル |
 | `env` | 環境変数名（参照用） |
 | `confirm` | 実行前の確認プロンプト。文字列または文字列配列。`--yes` / `-y` フラグで確認をスキップ |
+| `platforms` | 実行対象 OS（`NodeJS.Platform` 配列）。指定なしは全 OS で実行。例: `["darwin", "linux"]`。対象外 OS では自動的にスキップされる |
 | `before` | タスク実行前のフック |
 | `after` | タスク実行後のフック |
 

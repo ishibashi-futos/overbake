@@ -11,6 +11,7 @@ import {
   formatSummary,
   formatTaskDone,
   formatTaskFailed,
+  formatTaskSkipped,
   formatTaskStarted,
   type TaskResult,
 } from "../ui/format.ts";
@@ -61,6 +62,12 @@ export interface ExecutionOptions {
   yes?: boolean;
   noSummary?: boolean;
   confirmFn?: ConfirmFn;
+  /** テスト用: 省略時は process.platform を使用 */
+  platform?: NodeJS.Platform;
+}
+
+function buildPlatformSkipReason(platforms: NodeJS.Platform[]): string {
+  return `skipped (platform: ${platforms.join(", ")} only)`;
 }
 
 export async function buildPlan(taskName: string): Promise<ExecutionPlan>;
@@ -100,6 +107,21 @@ export async function executePlan(
   const confirmFn = options.confirmFn ?? createDefaultConfirm();
 
   for (const task of plan.tasks) {
+    // プラットフォームチェック: platforms 未指定は全 OS で実行
+    const allowedPlatforms = task.options?.platforms;
+    const currentPlatform = (options.platform ??
+      process.platform) as NodeJS.Platform;
+    if (
+      allowedPlatforms &&
+      allowedPlatforms.length > 0 &&
+      !allowedPlatforms.includes(currentPlatform)
+    ) {
+      const reason = buildPlatformSkipReason(allowedPlatforms);
+      logger.info(formatTaskSkipped(task.name, reason, options.noColor));
+      results.push({ name: task.name, status: "skipped", durationMs: 0 });
+      continue;
+    }
+
     if (task.options?.confirm && !options.yes) {
       const confirmMessages = Array.isArray(task.options.confirm)
         ? task.options.confirm
@@ -221,7 +243,12 @@ export function printDryRun(plan: ExecutionPlan): void {
   }
 }
 
-export function printExplain(plan: ExecutionPlan): void {
+export function printExplain(
+  plan: ExecutionPlan,
+  options: { platform?: NodeJS.Platform } = {},
+): void {
+  const currentPlatform = (options.platform ??
+    process.platform) as NodeJS.Platform;
   console.log(`Targets: ${plan.targets.join(" ")}`);
   for (const task of plan.tasks) {
     console.log(`[${task.name}]`);
@@ -234,6 +261,13 @@ export function printExplain(plan: ExecutionPlan): void {
     console.log(`  outputs: ${outputs.length ? outputs.join(", ") : "(none)"}`);
     const env = task.options?.env ?? [];
     console.log(`  env:     ${env.length ? env.join(", ") : "(none)"}`);
+    const platforms = task.options?.platforms ?? [];
+    if (platforms.length > 0) {
+      console.log(`  platforms: ${platforms.join(", ")}`);
+      if (!platforms.includes(currentPlatform)) {
+        console.log(`  skip reason: ${buildPlatformSkipReason(platforms)}`);
+      }
+    }
   }
 }
 
