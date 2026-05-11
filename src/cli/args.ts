@@ -25,6 +25,7 @@ export interface Flags {
   verbose: boolean;
   noColor: boolean;
   yes: boolean;
+  noSummary: boolean;
   // "mermaid" | "dot" または未知フォーマット（main.ts で検証）
   graph?: string;
 }
@@ -101,6 +102,7 @@ export function parseArgs(args: string[]): Command {
     command === "--no-color" ||
     command === "--yes" ||
     command === "-y" ||
+    command === "--no-summary" ||
     command === "--graph" ||
     command.startsWith("--graph=")
   ) {
@@ -113,6 +115,7 @@ export function parseArgs(args: string[]): Command {
       verbose: args.includes("--verbose"),
       noColor: args.includes("--no-color"),
       yes: args.includes("--yes") || args.includes("-y"),
+      noSummary: args.includes("--no-summary"),
       graph: extractGraph(args),
     };
     return { type: "default", flags };
@@ -140,7 +143,8 @@ export function parseArgs(args: string[]): Command {
       arg !== "--verbose" &&
       arg !== "--no-color" &&
       arg !== "--yes" &&
-      arg !== "-y"
+      arg !== "-y" &&
+      arg !== "--no-summary"
     ) {
       taskNames.push(arg);
     }
@@ -155,6 +159,7 @@ export function parseArgs(args: string[]): Command {
     verbose: args.includes("--verbose"),
     noColor: args.includes("--no-color"),
     yes: args.includes("--yes") || args.includes("-y"),
+    noSummary: args.includes("--no-summary"),
     graph: extractGraph(args),
   };
 

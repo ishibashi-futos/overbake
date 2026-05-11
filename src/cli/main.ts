@@ -159,6 +159,7 @@ export async function main(args: string[]): Promise<void> {
           verbose: command.flags.verbose,
           noColor: command.flags.noColor,
           yes: command.flags.yes,
+          noSummary: command.flags.noSummary,
         });
         const paths = collectWatchPaths(plan.tasks, plan.bakefile);
         console.log(`Watching: ${paths.join(", ")}`);
@@ -169,6 +170,7 @@ export async function main(args: string[]): Promise<void> {
             verbose: command.flags.verbose,
             noColor: command.flags.noColor,
             yes: command.flags.yes,
+            noSummary: command.flags.noSummary,
           });
         });
         await new Promise<void>(() => {});
@@ -181,6 +183,7 @@ export async function main(args: string[]): Promise<void> {
         verbose: command.flags.verbose,
         noColor: command.flags.noColor,
         yes: command.flags.yes,
+        noSummary: command.flags.noSummary,
       });
       return;
     }
@@ -213,6 +216,7 @@ export async function main(args: string[]): Promise<void> {
         verbose: flags.verbose,
         noColor: flags.noColor,
         yes: flags.yes,
+        noSummary: flags.noSummary,
       });
       const paths = collectWatchPaths(plan.tasks, plan.bakefile);
       console.log(`Watching: ${paths.join(", ")}`);
@@ -224,6 +228,7 @@ export async function main(args: string[]): Promise<void> {
           verbose: flags.verbose,
           noColor: flags.noColor,
           yes: flags.yes,
+          noSummary: flags.noSummary,
         });
       });
       // Ctrl+C まで待機
@@ -237,6 +242,7 @@ export async function main(args: string[]): Promise<void> {
       verbose: flags.verbose,
       noColor: flags.noColor,
       yes: flags.yes,
+      noSummary: flags.noSummary,
     });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

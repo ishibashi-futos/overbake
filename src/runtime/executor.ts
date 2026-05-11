@@ -8,9 +8,11 @@ import { resolveTasks } from "../graph/resolver.ts";
 import type { TaskDefinition } from "../types.ts";
 import {
   colorRed,
+  formatSummary,
   formatTaskDone,
   formatTaskFailed,
   formatTaskStarted,
+  type TaskResult,
 } from "../ui/format.ts";
 import { Logger } from "../ui/logger.ts";
 import { createTaskContext } from "./context.ts";
@@ -57,6 +59,7 @@ export interface ExecutionOptions {
   verbose?: boolean;
   noColor?: boolean;
   yes?: boolean;
+  noSummary?: boolean;
   confirmFn?: ConfirmFn;
 }
 
@@ -91,6 +94,8 @@ export async function executePlan(
   logger.verbose(`tasks: ${plan.tasks.map((t) => t.name).join(", ")}`);
 
   const failures: Array<{ taskName: string; error: Error }> = [];
+  const results: TaskResult[] = [];
+  const wallStart = performance.now();
   const confirmFn = options.confirmFn ?? createDefaultConfirm();
 
   for (const task of plan.tasks) {
@@ -148,6 +153,7 @@ export async function executePlan(
       if (taskError instanceof Error) {
         logger.error(colorRed(taskError.message, options.noColor));
       }
+      results.push({ name: task.name, status: "failed", durationMs });
       failures.push({
         taskName: task.name,
         error:
@@ -155,18 +161,48 @@ export async function executePlan(
       });
 
       if (!options.keepGoing) {
+        if (!options.noSummary) {
+          // 実測の wall time と各タスクの実行時間の最大値の大きい方を使用
+          const wallMs = Math.max(
+            performance.now() - wallStart,
+            ...results.map((r) => r.durationMs),
+          );
+          console.log(
+            formatSummary(results, wallMs, {
+              quiet: options.quiet,
+              noColor: options.noColor,
+            }),
+          );
+        }
         throw taskError;
       }
     } else {
+      results.push({
+        name: task.name,
+        status: task.isMeta ? "meta" : "ok",
+        durationMs,
+      });
       logger.info(formatTaskDone(task.name, durationMs, options.noColor));
     }
   }
 
+  // 実測の wall time と各タスクの実行時間の最大値の大きい方を使用
+  // （短いタスクでは performance.now() の精度でずれることがあるため）
+  const wallMs = Math.max(
+    performance.now() - wallStart,
+    ...results.map((r) => r.durationMs),
+  );
+
+  if (!options.noSummary) {
+    console.log(
+      formatSummary(results, wallMs, {
+        quiet: options.quiet,
+        noColor: options.noColor,
+      }),
+    );
+  }
+
   if (failures.length > 0) {
-    logger.error("\nFailed tasks:");
-    for (const { taskName } of failures) {
-      logger.error(`  - ${taskName}`);
-    }
     const failureMessages = failures
       .map((f) => `${f.taskName}: ${f.error.message}`)
       .join("\n");

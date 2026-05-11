@@ -35,6 +35,7 @@ import {
   DuplicateTaskError,
   TaskNotFoundError,
 } from "../src/shared/errors.ts";
+import { formatSummary, type TaskResult } from "../src/ui/format.ts";
 import { renderDot, renderMermaid } from "../src/ui/graph.ts";
 import {
   renderGlobalHelp,
@@ -2882,5 +2883,279 @@ task("test", { deps: ["build"] }, () => {});`,
 
     expect(exitCode).toBe(2);
     expect(errors.some((e) => e.includes("svg"))).toBe(true);
+  });
+});
+
+// issue #18: 実行サマリー
+describe("formatSummary", () => {
+  test("正常終了のタスク一覧を表示する", () => {
+    const results: TaskResult[] = [
+      { name: "clean", status: "ok", durationMs: 12 },
+      { name: "build", status: "ok", durationMs: 1200 },
+    ];
+    const output = formatSummary(results, 1212, { noColor: true });
+    expect(output).toContain("Summary");
+    expect(output).toContain("clean");
+    expect(output).toContain("build");
+    expect(output).toContain("12ms");
+    expect(output).toContain("1.2s");
+    expect(output).toContain("2 tasks");
+    expect(output).toContain("wall");
+  });
+
+  test("失敗タスクが summary と Failed tasks 一覧に含まれる", () => {
+    const results: TaskResult[] = [
+      { name: "clean", status: "ok", durationMs: 10 },
+      { name: "build", status: "failed", durationMs: 50 },
+    ];
+    const output = formatSummary(results, 60, { noColor: true });
+    expect(output).toContain("✗");
+    expect(output).toContain("1 failed");
+    expect(output).toContain("Failed tasks:");
+    expect(output).toContain("- build");
+  });
+
+  test("meta タスクが ✓ (meta) で表示される", () => {
+    const results: TaskResult[] = [
+      { name: "ci", status: "meta", durationMs: 0 },
+    ];
+    const output = formatSummary(results, 0, { noColor: true });
+    expect(output).toContain("✓");
+    expect(output).toContain("(meta)");
+  });
+
+  test("cached タスクが ⏭ cached で表示される", () => {
+    const results: TaskResult[] = [
+      { name: "lint", status: "cached", durationMs: 0 },
+    ];
+    const output = formatSummary(results, 0, { noColor: true });
+    expect(output).toContain("⏭");
+    expect(output).toContain("cached");
+  });
+
+  test("skipped タスクが ⏭ skipped で表示される", () => {
+    const results: TaskResult[] = [
+      { name: "test", status: "skipped", durationMs: 0 },
+    ];
+    const output = formatSummary(results, 0, { noColor: true });
+    expect(output).toContain("⏭");
+    expect(output).toContain("skipped");
+  });
+
+  test("quiet モードでは詳細行を出さず要約行のみ表示する", () => {
+    const results: TaskResult[] = [
+      { name: "clean", status: "ok", durationMs: 10 },
+      { name: "build", status: "ok", durationMs: 100 },
+    ];
+    const output = formatSummary(results, 110, { quiet: true, noColor: true });
+    expect(output).not.toContain("Summary");
+    expect(output).toContain("2 tasks");
+    expect(output).toContain("wall");
+  });
+
+  test("quiet モードで失敗がある場合は Failed tasks 一覧を含む", () => {
+    const results: TaskResult[] = [
+      { name: "build", status: "failed", durationMs: 30 },
+    ];
+    const output = formatSummary(results, 30, { quiet: true, noColor: true });
+    expect(output).not.toContain("Summary");
+    expect(output).toContain("1 failed");
+    expect(output).toContain("Failed tasks:");
+    expect(output).toContain("- build");
+  });
+
+  test("単数タスクは '1 task' と表示される", () => {
+    const results: TaskResult[] = [{ name: "a", status: "ok", durationMs: 5 }];
+    const output = formatSummary(results, 5, { noColor: true });
+    expect(output).toContain("1 task ");
+    expect(output).not.toContain("1 tasks");
+  });
+});
+
+describe("parseArgs - --no-summary フラグ", () => {
+  test("run コマンドで --no-summary を解析すると flags.noSummary=true になる", () => {
+    const result = parseArgs(["build", "--no-summary"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.noSummary).toBe(true);
+    }
+  });
+
+  test("default コマンドで --no-summary を解析すると flags.noSummary=true になる", () => {
+    const result = parseArgs(["--no-summary"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.noSummary).toBe(true);
+    }
+  });
+
+  test("--no-summary なしは flags.noSummary=false になる", () => {
+    const result = parseArgs(["build"]);
+    if (result.type === "run") {
+      expect(result.flags.noSummary).toBe(false);
+    }
+  });
+});
+
+describe("executePlan - サマリー出力", () => {
+  let originalCwd: string;
+  let tempDir: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-summary-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("実行後に Summary が console.log に出力される", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("a", () => {}); task("b", { deps: ["a"] }, () => {});`,
+    );
+    const plan = await buildPlan("b");
+
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+
+    try {
+      await executePlan(plan, { noColor: true });
+    } finally {
+      console.log = orig;
+    }
+
+    const summaryLog = logs.find((l) => l.includes("Summary"));
+    expect(summaryLog).toBeDefined();
+    expect(summaryLog).toContain("a");
+    expect(summaryLog).toContain("b");
+    expect(summaryLog).toContain("wall");
+  });
+
+  test("--no-summary では Summary が出力されない", async () => {
+    writeFileSync(resolve(tempDir, "Bakefile.ts"), `task("a", () => {});`);
+    const plan = await buildPlan("a");
+
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+
+    try {
+      await executePlan(plan, { noSummary: true, noColor: true });
+    } finally {
+      console.log = orig;
+    }
+
+    expect(logs.some((l) => l.includes("Summary"))).toBe(false);
+    expect(logs.some((l) => l.includes("wall"))).toBe(false);
+  });
+
+  test("quiet モードでも要約行が出力される", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("a", () => { console.log("task log"); });`,
+    );
+    const plan = await buildPlan("a");
+
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+
+    try {
+      await executePlan(plan, { quiet: true, noColor: true });
+    } finally {
+      console.log = orig;
+    }
+
+    // quiet モード: "Summary" ヘッダはなく要約行のみ
+    const summaryLine = logs.find((l) => l.includes("wall"));
+    expect(summaryLine).toBeDefined();
+    expect(logs.some((l) => l.includes("Summary"))).toBe(false);
+    // タスク内の console.log は抑制される
+    expect(logs.some((l) => l === "task log")).toBe(false);
+  });
+
+  test("メタタスク (isMeta=true) が (meta) と表示される", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("sub", () => {});
+task("group", { deps: ["sub"] });`,
+    );
+    const plan = await buildPlan("group");
+
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+
+    try {
+      await executePlan(plan, { noColor: true });
+    } finally {
+      console.log = orig;
+    }
+
+    const summaryLog = logs.find((l) => l.includes("Summary"));
+    expect(summaryLog).toBeDefined();
+    expect(summaryLog).toContain("(meta)");
+  });
+
+  test("keepGoing=false で失敗時もサマリーが出力される", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("fail", () => { throw new Error("oops"); });`,
+    );
+    const plan = await buildPlan("fail");
+
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+
+    try {
+      await executePlan(plan, { keepGoing: false, noColor: true });
+    } catch {
+      // 期待通り失敗
+    } finally {
+      console.log = orig;
+    }
+
+    const summaryLog = logs.find((l) => l.includes("wall"));
+    expect(summaryLog).toBeDefined();
+    expect(summaryLog).toContain("1 failed");
+  });
+
+  test("keepGoing=true で複数失敗時にサマリーに全失敗が反映される", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("fail1", () => { throw new Error("err1"); });
+task("fail2", () => { throw new Error("err2"); });`,
+    );
+    const plan = await buildPlan(["fail1", "fail2"]);
+
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+
+    try {
+      await executePlan(plan, { keepGoing: true, noColor: true });
+    } catch {
+      // 期待通り失敗
+    } finally {
+      console.log = orig;
+    }
+
+    const summaryLog = logs.find((l) => l.includes("wall"));
+    expect(summaryLog).toBeDefined();
+    expect(summaryLog).toContain("2 failed");
+    expect(summaryLog).toContain("- fail1");
+    expect(summaryLog).toContain("- fail2");
   });
 });

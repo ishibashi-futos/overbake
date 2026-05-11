@@ -41,6 +41,9 @@ bake --graph
 # inputs 未指定の場合は Bakefile.ts を監視対象にする
 bake build --watch
 
+# 実行サマリーを非表示にする
+bake build --no-summary
+
 # 確認プロンプトをスキップして実行
 bake deploy --yes
 bake deploy -y
@@ -114,3 +117,20 @@ task.default("build");
 | `confirm` | 実行前の確認プロンプト。文字列または文字列配列。`--yes` / `-y` フラグで確認をスキップ |
 | `before` | タスク実行前のフック |
 | `after` | タスク実行後のフック |
+
+## 実行サマリー
+
+タスク実行後に各タスクの結果と所要時間、合計 wall time が表示されます。
+
+```
+Summary
+  clean    ✓  12ms
+  build    ✓  1.2s
+  ci       ✓  (meta)
+  ──────────────────────
+  3 tasks · total 1.3s (wall)
+```
+
+- `--quiet` では最小限の要約行のみ表示されます（タスク内のログ抑制は維持）
+- `--no-summary` でサマリー出力を完全に抑制できます
+- 失敗があった場合はサマリー末尾に失敗タスク一覧が付加されます
