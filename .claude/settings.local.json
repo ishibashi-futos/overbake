@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "deny": [
+      "Write(issues/**)",
+      "Edit(issues/**)",
+      "MultiEdit(issues/**)",
+      "NotebookEdit(issues/**)",
+      "Bash(rm *issues*)",
+      "Bash(mv *issues*)",
+      "Bash(cp *issues*)",
+      "Bash(mkdir *issues*)",
+      "Bash(touch *issues*)",
+      "Bash(truncate *issues*)",
+      "Bash(rsync *issues*)",
+      "Bash(git clean *)",
+      "Bash(git checkout *issues*)",
+      "Bash(git restore *issues*)",
+      "Bash(git reset *issues*)",
+      "Bash(find *issues* -delete*)",
+      "Bash(find *issues* -exec*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/block-issues-writes.py"
+          }
+        ]
+      }
+    ]
+  }
+}
