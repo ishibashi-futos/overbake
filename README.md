@@ -31,6 +31,10 @@ bake build --explain
 # inputs 未指定の場合は Bakefile.ts を監視対象にする
 bake build --watch
 
+# 確認プロンプトをスキップして実行
+bake deploy --yes
+bake deploy -y
+
 # タスク一覧を表示
 bake list
 bake -l
@@ -60,6 +64,10 @@ task("build", { desc: "CLI をビルド", deps: ["clean"] }, async ({ cmd }) => 
   ]);
 });
 
+task("deploy", { desc: "デプロイ", confirm: "本番環境にデプロイしますか?" }, async ({ cmd }) => {
+  await cmd("kubectl", ["apply", "-f", "manifest.yaml"]);
+});
+
 // デフォルトタスクを指定（bake だけで実行される）
 task.default("build");
 ```
@@ -78,3 +86,16 @@ task.default("build");
 | `ctx.exists(path)` | ファイル・ディレクトリが存在するかチェック |
 | `ctx.resolve(...segments)` | パスを解決（相対パス → 絶対パス） |
 | `ctx.log(...args)` | ログ出力 |
+
+### タスクオプション
+
+| オプション | 説明 |
+|---------|------|
+| `desc` | タスク説明 |
+| `deps` | 依存タスク（文字列配列） |
+| `inputs` | 監視対象ファイル（`--watch` で使用） |
+| `outputs` | タスク出力ファイル |
+| `env` | 環境変数名（参照用） |
+| `confirm` | 実行前の確認プロンプト。文字列または文字列配列。`--yes` / `-y` フラグで確認をスキップ |
+| `before` | タスク実行前のフック |
+| `after` | タスク実行後のフック |

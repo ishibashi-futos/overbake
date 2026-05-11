@@ -24,6 +24,7 @@ export interface Flags {
   quiet: boolean;
   verbose: boolean;
   noColor: boolean;
+  yes: boolean;
 }
 
 export interface RunCommand {
@@ -63,7 +64,9 @@ export function parseArgs(args: string[]): Command {
     command === "--keep-going" ||
     command === "--quiet" ||
     command === "--verbose" ||
-    command === "--no-color"
+    command === "--no-color" ||
+    command === "--yes" ||
+    command === "-y"
   ) {
     const flags: Flags = {
       dryRun: args.includes("--dry-run"),
@@ -73,6 +76,7 @@ export function parseArgs(args: string[]): Command {
       quiet: args.includes("--quiet"),
       verbose: args.includes("--verbose"),
       noColor: args.includes("--no-color"),
+      yes: args.includes("--yes") || args.includes("-y"),
     };
     return { type: "default", flags };
   }
@@ -83,7 +87,7 @@ export function parseArgs(args: string[]): Command {
     return { type: "help", taskName };
   }
 
-  // Extract task names (non-flag positional arguments before --)
+  // -- の前の非フラグ位置引数（タスク名）を抽出
   const taskNames: string[] = [];
   const dashIndex = args.indexOf("--");
   const flagArgs = dashIndex !== -1 ? args.slice(0, dashIndex) : args;
@@ -97,7 +101,9 @@ export function parseArgs(args: string[]): Command {
       arg !== "--keep-going" &&
       arg !== "--quiet" &&
       arg !== "--verbose" &&
-      arg !== "--no-color"
+      arg !== "--no-color" &&
+      arg !== "--yes" &&
+      arg !== "-y"
     ) {
       taskNames.push(arg);
     }
@@ -111,6 +117,7 @@ export function parseArgs(args: string[]): Command {
     quiet: args.includes("--quiet"),
     verbose: args.includes("--verbose"),
     noColor: args.includes("--no-color"),
+    yes: args.includes("--yes") || args.includes("-y"),
   };
 
   return { type: "run", taskNames, flags };

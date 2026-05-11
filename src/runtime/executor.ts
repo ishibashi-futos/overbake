@@ -1,7 +1,9 @@
 import { dirname } from "node:path";
+import { createInterface } from "node:readline";
 import { discoverBakefile } from "../bakefile/discover.ts";
 import { loadBakefile } from "../bakefile/loader.ts";
 import { TaskRegistry } from "../bakefile/registry.ts";
+import { CliError } from "../cli/error.ts";
 import { resolveTasks } from "../graph/resolver.ts";
 import type { TaskDefinition } from "../types.ts";
 import {
@@ -16,6 +18,32 @@ import { runWithHooks } from "./hooks.ts";
 
 export { createTaskContext } from "./context.ts";
 
+export type ConfirmFn = (prompt: string) => Promise<boolean>;
+
+export function createDefaultConfirm(): ConfirmFn {
+  return async (prompt: string): Promise<boolean> => {
+    const isTTY = process.stdin.isTTY && process.stdout.isTTY;
+    if (!isTTY) {
+      throw new CliError(
+        `${prompt}\nConfirm is not supported in non-TTY environment. Use --yes/-y flag.`,
+        2,
+      );
+    }
+
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    return new Promise((resolve) => {
+      rl.question(`${prompt} [y/N] `, (answer) => {
+        rl.close();
+        resolve(answer.toLowerCase() === "y");
+      });
+    });
+  };
+}
+
 export interface ExecutionPlan {
   bakefile: string;
   root: string;
@@ -28,6 +56,8 @@ export interface ExecutionOptions {
   quiet?: boolean;
   verbose?: boolean;
   noColor?: boolean;
+  yes?: boolean;
+  confirmFn?: ConfirmFn;
 }
 
 export async function buildPlan(taskName: string): Promise<ExecutionPlan>;
@@ -61,8 +91,22 @@ export async function executePlan(
   logger.verbose(`tasks: ${plan.tasks.map((t) => t.name).join(", ")}`);
 
   const failures: Array<{ taskName: string; error: Error }> = [];
+  const confirmFn = options.confirmFn ?? createDefaultConfirm();
 
   for (const task of plan.tasks) {
+    if (task.options?.confirm && !options.yes) {
+      const confirmMessages = Array.isArray(task.options.confirm)
+        ? task.options.confirm
+        : [task.options.confirm];
+
+      for (const message of confirmMessages) {
+        const confirmed = await confirmFn(message);
+        if (!confirmed) {
+          throw new Error(`Task '${task.name}' cancelled by user.`);
+        }
+      }
+    }
+
     const ctx = createTaskContext({
       name: task.name,
       root: plan.root,

@@ -2204,3 +2204,227 @@ task.default("clean");
     expect(output).toContain("Default task is already set");
   });
 });
+
+// issue #14: confirm プロンプト - parseArgs の --yes / -y フラグ
+describe("confirm プロンプト (#14) - parseArgs の --yes / -y フラグ", () => {
+  test("run コマンドで --yes を解析すると flags.yes=true になる", () => {
+    const result = parseArgs(["build", "--yes"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.yes).toBe(true);
+    }
+  });
+
+  test("run コマンドで -y を解析すると flags.yes=true になる", () => {
+    const result = parseArgs(["build", "-y"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.yes).toBe(true);
+    }
+  });
+
+  test("default コマンドで --yes を解析すると flags.yes=true になる", () => {
+    const result = parseArgs(["--yes"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.yes).toBe(true);
+    }
+  });
+
+  test("default コマンドで -y を解析すると flags.yes=true になる", () => {
+    const result = parseArgs(["-y"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.yes).toBe(true);
+    }
+  });
+});
+
+// issue #14: confirm プロンプト - executePlan confirm 動作
+describe("confirm プロンプト (#14) - executePlan confirm 動作", () => {
+  let originalCwd: string;
+  let tempDir: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-confirm-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("options.yes=true なら confirmFn を呼ばずにタスクを実行する", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("confirm-task", { confirm: "続行しますか?" }, () => {
+        globalThis.__confirmTaskCalled = true;
+      });`,
+    );
+
+    const g = globalThis as Record<string, unknown>;
+    g.__confirmTaskCalled = false;
+
+    let confirmCalled = false;
+    const mockConfirmFn = async (_: string): Promise<boolean> => {
+      confirmCalled = true;
+      return true;
+    };
+
+    const plan = await buildPlan("confirm-task");
+    await executePlan(plan, { yes: true, confirmFn: mockConfirmFn });
+
+    expect(confirmCalled).toBe(false);
+    expect(g.__confirmTaskCalled).toBe(true);
+    delete g.__confirmTaskCalled;
+  });
+
+  test("confirm: string[] は順番に confirmFn を呼ぶ", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("multi-confirm", { confirm: ["確認1", "確認2", "確認3"] }, () => {});`,
+    );
+
+    const calledWith: string[] = [];
+    const mockConfirmFn = async (msg: string): Promise<boolean> => {
+      calledWith.push(msg);
+      return true;
+    };
+
+    const plan = await buildPlan("multi-confirm");
+    await executePlan(plan, { confirmFn: mockConfirmFn });
+
+    expect(calledWith).toEqual(["確認1", "確認2", "確認3"]);
+  });
+
+  test("confirmFn が false を返したらタスクを実行せず中断する", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("cancel-task", { confirm: "本当に実行しますか?" }, () => {
+        globalThis.__cancelTaskCalled = true;
+      });`,
+    );
+
+    const g = globalThis as Record<string, unknown>;
+    g.__cancelTaskCalled = false;
+
+    const mockConfirmFn = async (_: string): Promise<boolean> => false;
+
+    const plan = await buildPlan("cancel-task");
+    let thrownError: unknown;
+    try {
+      await executePlan(plan, { confirmFn: mockConfirmFn });
+    } catch (e) {
+      thrownError = e;
+    }
+
+    expect(thrownError).toBeDefined();
+    expect(g.__cancelTaskCalled).toBe(false);
+    delete g.__cancelTaskCalled;
+  });
+
+  test("非TTY + --yes なしは exitCode=2 の CliError を throw する", async () => {
+    const { createDefaultConfirm } = await import("../src/runtime/executor.ts");
+
+    // TTY を強制的に無効化して非対話環境をシミュレート
+    const origStdinIsTTY = process.stdin.isTTY;
+    const origStdoutIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: false,
+      configurable: true,
+    });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: false,
+      configurable: true,
+    });
+
+    let caughtError: unknown;
+    try {
+      const confirmFn = createDefaultConfirm();
+      await confirmFn("テスト確認");
+    } catch (e) {
+      caughtError = e;
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value: origStdinIsTTY,
+        configurable: true,
+      });
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: origStdoutIsTTY,
+        configurable: true,
+      });
+    }
+
+    expect(caughtError).toBeDefined();
+    expect((caughtError as Error & { exitCode?: number }).exitCode).toBe(2);
+  });
+});
+
+// issue #14: confirm プロンプト - main --yes / -y 統合テスト
+describe("confirm プロンプト (#14) - main --yes / -y 統合テスト", () => {
+  let originalCwd: string;
+  let tempDir: string;
+  let originalExit: typeof process.exit;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-confirm-main-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+    originalExit = process.exit;
+    (process.exit as unknown) = () => {};
+  });
+
+  afterEach(() => {
+    process.exit = originalExit;
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("--yes フラグで confirm 付きタスクを実行できる", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("risky", { confirm: "本当に実行しますか?" }, () => {
+        globalThis.__riskyTaskCalled = true;
+      });`,
+    );
+
+    const g = globalThis as Record<string, unknown>;
+    g.__riskyTaskCalled = false;
+
+    await main(["risky", "--yes"]);
+
+    expect(g.__riskyTaskCalled).toBe(true);
+    delete g.__riskyTaskCalled;
+  });
+
+  test("-y フラグで confirm 付きタスクを実行できる", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("risky2", { confirm: "本当に実行しますか?" }, () => {
+        globalThis.__risky2TaskCalled = true;
+      });`,
+    );
+
+    const g = globalThis as Record<string, unknown>;
+    g.__risky2TaskCalled = false;
+
+    await main(["risky2", "-y"]);
+
+    expect(g.__risky2TaskCalled).toBe(true);
+    delete g.__risky2TaskCalled;
+  });
+});

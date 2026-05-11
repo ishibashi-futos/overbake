@@ -4,6 +4,7 @@ export interface TaskOptions {
   inputs?: string[];
   outputs?: string[];
   env?: string[];
+  confirm?: string | string[];
   before?: (ctx: HookContext) => void | Promise<void>;
   after?: (
     ctx: HookContext & { ok: boolean; durationMs: number },

@@ -75,7 +75,7 @@ export async function main(args: string[]): Promise<void> {
         return;
       }
 
-      // Build plan using already-loaded registry to avoid dynamic import cache issues
+      // 動的インポートキャッシュ問題を避けるため、既にロードされたレジストリを使用してプランを構築
       const tasks = resolveTasks(defaultTaskName, registry.all());
       const plan: ExecutionPlan = {
         bakefile,
@@ -100,6 +100,7 @@ export async function main(args: string[]): Promise<void> {
           quiet: command.flags.quiet,
           verbose: command.flags.verbose,
           noColor: command.flags.noColor,
+          yes: command.flags.yes,
         });
         const paths = collectWatchPaths(plan.tasks, plan.bakefile);
         console.log(`Watching: ${paths.join(", ")}`);
@@ -109,6 +110,7 @@ export async function main(args: string[]): Promise<void> {
             quiet: command.flags.quiet,
             verbose: command.flags.verbose,
             noColor: command.flags.noColor,
+            yes: command.flags.yes,
           });
         });
         await new Promise<void>(() => {});
@@ -120,6 +122,7 @@ export async function main(args: string[]): Promise<void> {
         quiet: command.flags.quiet,
         verbose: command.flags.verbose,
         noColor: command.flags.noColor,
+        yes: command.flags.yes,
       });
       return;
     }
@@ -143,6 +146,7 @@ export async function main(args: string[]): Promise<void> {
         quiet: flags.quiet,
         verbose: flags.verbose,
         noColor: flags.noColor,
+        yes: flags.yes,
       });
       const paths = collectWatchPaths(plan.tasks, plan.bakefile);
       console.log(`Watching: ${paths.join(", ")}`);
@@ -153,6 +157,7 @@ export async function main(args: string[]): Promise<void> {
           quiet: flags.quiet,
           verbose: flags.verbose,
           noColor: flags.noColor,
+          yes: flags.yes,
         });
       });
       // Ctrl+C まで待機
@@ -165,6 +170,7 @@ export async function main(args: string[]): Promise<void> {
       quiet: flags.quiet,
       verbose: flags.verbose,
       noColor: flags.noColor,
+      yes: flags.yes,
     });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
