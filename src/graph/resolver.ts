@@ -7,11 +7,22 @@ import type { TaskDefinition } from "../types.ts";
 export function resolveTasks(
   targetName: string,
   allTasks: TaskDefinition[],
+): TaskDefinition[];
+export function resolveTasks(
+  targetNames: string[],
+  allTasks: TaskDefinition[],
+): TaskDefinition[];
+export function resolveTasks(
+  targetName: string | string[],
+  allTasks: TaskDefinition[],
 ): TaskDefinition[] {
   const taskMap = new Map(allTasks.map((t) => [t.name, t]));
+  const targetNames = Array.isArray(targetName) ? targetName : [targetName];
 
-  if (!taskMap.has(targetName)) {
-    throw new TaskNotFoundError(targetName);
+  for (const name of targetNames) {
+    if (!taskMap.has(name)) {
+      throw new TaskNotFoundError(name);
+    }
   }
 
   const visited = new Set<string>();
@@ -41,6 +52,10 @@ export function resolveTasks(
     result.push(task);
   }
 
-  visit(targetName);
+  // Resolve in order, but shared dependencies are visited only once
+  for (const targetName of targetNames) {
+    visit(targetName);
+  }
+
   return result;
 }

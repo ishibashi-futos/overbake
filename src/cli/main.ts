@@ -77,7 +77,12 @@ export async function main(args: string[]): Promise<void> {
 
       // Build plan using already-loaded registry to avoid dynamic import cache issues
       const tasks = resolveTasks(defaultTaskName, registry.all());
-      const plan: ExecutionPlan = { bakefile, root, tasks };
+      const plan: ExecutionPlan = {
+        bakefile,
+        root,
+        tasks,
+        targets: [defaultTaskName],
+      };
 
       if (command.flags.dryRun) {
         printDryRun(plan);
@@ -104,8 +109,8 @@ export async function main(args: string[]): Promise<void> {
       return;
     }
 
-    const { taskName, flags } = command;
-    const plan = await buildPlan(taskName);
+    const { taskNames, flags } = command;
+    const plan = await buildPlan(taskNames);
 
     if (flags.dryRun) {
       printDryRun(plan);

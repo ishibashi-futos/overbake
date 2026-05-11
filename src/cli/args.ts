@@ -24,7 +24,7 @@ export interface Flags {
 
 export interface RunCommand {
   type: "run";
-  taskName: string;
+  taskNames: string[];
   flags: Flags;
 }
 
@@ -71,11 +71,27 @@ export function parseArgs(args: string[]): Command {
     return { type: "help", taskName };
   }
 
+  // Extract task names (non-flag positional arguments before --)
+  const taskNames: string[] = [];
+  const dashIndex = args.indexOf("--");
+  const flagArgs = dashIndex !== -1 ? args.slice(0, dashIndex) : args;
+
+  for (const arg of flagArgs) {
+    if (
+      !arg.startsWith("-") &&
+      arg !== "--dry-run" &&
+      arg !== "--explain" &&
+      arg !== "--watch"
+    ) {
+      taskNames.push(arg);
+    }
+  }
+
   const flags: Flags = {
     dryRun: args.includes("--dry-run"),
     explain: args.includes("--explain"),
     watch: args.includes("--watch"),
   };
 
-  return { type: "run", taskName: command, flags };
+  return { type: "run", taskNames, flags };
 }

@@ -13,15 +13,21 @@ export interface ExecutionPlan {
   bakefile: string;
   root: string;
   tasks: TaskDefinition[];
+  targets: string[];
 }
 
-export async function buildPlan(taskName: string): Promise<ExecutionPlan> {
+export async function buildPlan(taskName: string): Promise<ExecutionPlan>;
+export async function buildPlan(taskNames: string[]): Promise<ExecutionPlan>;
+export async function buildPlan(
+  taskName: string | string[],
+): Promise<ExecutionPlan> {
   const bakefile = discoverBakefile();
   const root = dirname(bakefile);
   const registry = new TaskRegistry();
   await loadBakefile(bakefile, registry);
-  const tasks = resolveTasks(taskName, registry.all());
-  return { bakefile, root, tasks };
+  const taskNames = Array.isArray(taskName) ? taskName : [taskName];
+  const tasks = resolveTasks(taskNames, registry.all());
+  return { bakefile, root, tasks, targets: taskNames };
 }
 
 export async function executePlan(plan: ExecutionPlan): Promise<void> {
@@ -34,6 +40,7 @@ export async function executePlan(plan: ExecutionPlan): Promise<void> {
 }
 
 export function printDryRun(plan: ExecutionPlan): void {
+  console.log(`Targets: ${plan.targets.join(" ")}`);
   console.log("Execution plan:");
   for (const task of plan.tasks) {
     console.log(`  ${task.name}`);
@@ -41,6 +48,7 @@ export function printDryRun(plan: ExecutionPlan): void {
 }
 
 export function printExplain(plan: ExecutionPlan): void {
+  console.log(`Targets: ${plan.targets.join(" ")}`);
   for (const task of plan.tasks) {
     console.log(`[${task.name}]`);
     if (task.options?.desc) console.log(`  desc:    ${task.options.desc}`);

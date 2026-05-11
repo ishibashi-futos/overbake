@@ -48,7 +48,15 @@ describe("parseArgs", () => {
     const result = parseArgs(["build"]);
     expect(result.type).toBe("run");
     if (result.type === "run") {
-      expect(result.taskName).toBe("build");
+      expect(result.taskNames).toEqual(["build"]);
+    }
+  });
+
+  test("parses run command with multiple task names", () => {
+    const result = parseArgs(["build", "test", "lint"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.taskNames).toEqual(["build", "test", "lint"]);
     }
   });
 
@@ -66,6 +74,7 @@ describe("parseArgs", () => {
     const result = parseArgs(["build", "--dry-run"]);
     expect(result.type).toBe("run");
     if (result.type === "run") {
+      expect(result.taskNames).toEqual(["build"]);
       expect(result.flags.dryRun).toBe(true);
       expect(result.flags.explain).toBe(false);
       expect(result.flags.watch).toBe(false);
@@ -76,6 +85,7 @@ describe("parseArgs", () => {
     const result = parseArgs(["build", "--explain"]);
     expect(result.type).toBe("run");
     if (result.type === "run") {
+      expect(result.taskNames).toEqual(["build"]);
       expect(result.flags.explain).toBe(true);
       expect(result.flags.dryRun).toBe(false);
       expect(result.flags.watch).toBe(false);
@@ -86,6 +96,7 @@ describe("parseArgs", () => {
     const result = parseArgs(["build", "--watch"]);
     expect(result.type).toBe("run");
     if (result.type === "run") {
+      expect(result.taskNames).toEqual(["build"]);
       expect(result.flags.watch).toBe(true);
       expect(result.flags.dryRun).toBe(false);
       expect(result.flags.explain).toBe(false);
@@ -280,6 +291,54 @@ describe("resolveTasks", () => {
     const tasks = [{ name: "a", fn: () => {}, options: {} }];
 
     expect(() => resolveTasks("missing", tasks)).toThrow(TaskNotFoundError);
+  });
+
+  test("resolves multiple targets with shared dependencies", () => {
+    const tasks = [
+      { name: "clean", fn: () => {}, options: {} },
+      { name: "build", fn: () => {}, options: { deps: ["clean"] } },
+      { name: "test", fn: () => {}, options: { deps: ["clean"] } },
+    ];
+
+    const result = resolveTasks(["build", "test"], tasks);
+    const names = result.map((t) => t.name);
+
+    // clean should appear only once
+    expect(names.filter((n) => n === "clean").length).toBe(1);
+    expect(names).toContain("build");
+    expect(names).toContain("test");
+
+    const cleanIdx = names.indexOf("clean");
+    const buildIdx = names.indexOf("build");
+    const testIdx = names.indexOf("test");
+
+    // clean should come before both build and test
+    expect(cleanIdx).toBeLessThan(buildIdx);
+    expect(cleanIdx).toBeLessThan(testIdx);
+  });
+
+  test("resolves multiple independent targets in order", () => {
+    const tasks = [
+      { name: "a", fn: () => {}, options: {} },
+      { name: "b", fn: () => {}, options: {} },
+      { name: "c", fn: () => {}, options: {} },
+    ];
+
+    const result = resolveTasks(["a", "b", "c"], tasks);
+    const names = result.map((t) => t.name);
+
+    expect(names).toEqual(["a", "b", "c"]);
+  });
+
+  test("throws TaskNotFoundError when any target is not found", () => {
+    const tasks = [
+      { name: "a", fn: () => {}, options: {} },
+      { name: "b", fn: () => {}, options: {} },
+    ];
+
+    expect(() => resolveTasks(["a", "missing"], tasks)).toThrow(
+      TaskNotFoundError,
+    );
   });
 });
 
@@ -537,6 +596,67 @@ task("c", { deps: ["b"] }, () => {
     expect(bIdx).toBeLessThan(cIdx);
   });
 
+  test("executes multiple targets with shared dependencies", async () => {
+    const bakefileContent = `
+task("clean", () => {
+  console.log("clean");
+});
+
+task("build", { deps: ["clean"] }, () => {
+  console.log("build");
+});
+
+task("test", { deps: ["clean"] }, () => {
+  console.log("test");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main(["build", "test"]);
+
+    const taskLogs = logs.filter((log) =>
+      ["clean", "build", "test"].includes(log),
+    );
+
+    // clean should appear only once
+    expect(taskLogs.filter((l) => l === "clean").length).toBe(1);
+    expect(taskLogs).toContain("build");
+    expect(taskLogs).toContain("test");
+
+    const cleanIdx = taskLogs.indexOf("clean");
+    const buildIdx = taskLogs.indexOf("build");
+    const testIdx = taskLogs.indexOf("test");
+
+    expect(cleanIdx).toBeLessThan(buildIdx);
+    expect(cleanIdx).toBeLessThan(testIdx);
+  });
+
+  test("executes multiple independent targets in order", async () => {
+    const bakefileContent = `
+task("a", () => {
+  console.log("task a");
+});
+
+task("b", () => {
+  console.log("task b");
+});
+
+task("c", () => {
+  console.log("task c");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main(["a", "b", "c"]);
+
+    const taskLogs = logs.filter(
+      (log) => log === "task a" || log === "task b" || log === "task c",
+    );
+    expect(taskLogs).toEqual(["task a", "task b", "task c"]);
+  });
+
   test("init command creates files", async () => {
     await main(["init"]);
 
@@ -754,6 +874,21 @@ describe("dry-run / explain", () => {
     console.log = orig;
     expect(lines.some((l) => l.includes("a"))).toBe(true);
     expect(lines.some((l) => l.includes("b"))).toBe(true);
+    expect(lines.some((l) => l.includes("Targets:"))).toBe(true);
+  });
+
+  test("printDryRun shows targets for multiple tasks", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("a", () => {}); task("b", () => {}); task("c", () => {});`,
+    );
+    const plan = await buildPlan(["a", "b"]);
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+    printDryRun(plan);
+    console.log = orig;
+    expect(lines.some((l) => l.includes("Targets: a b"))).toBe(true);
   });
 
   test("printExplain は desc/deps/inputs/outputs/env を出力しタスク関数を実行しない", async () => {
@@ -782,6 +917,32 @@ describe("dry-run / explain", () => {
     g.__dryRunCalled = false;
     await main(["mytask", "--dry-run"]);
     expect(g.__dryRunCalled).toBe(false);
+  });
+
+  test("main multiple tasks --dry-run shows execution plan", async () => {
+    writeFileSync(
+      resolve(tempDir, "Bakefile.ts"),
+      `task("a", () => { globalThis.__aCalled = true; });
+task("b", () => { globalThis.__bCalled = true; });`,
+    );
+    const g = globalThis as Record<string, unknown>;
+    g.__aCalled = false;
+    g.__bCalled = false;
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => {
+      lines.push(a.join(" "));
+      orig(...a);
+    };
+
+    await main(["a", "b", "--dry-run"]);
+
+    console.log = orig;
+
+    expect(lines.some((l) => l.includes("Targets: a b"))).toBe(true);
+    expect(g.__aCalled).toBe(false);
+    expect(g.__bCalled).toBe(false);
   });
 
   test("main --explain はタスク関数を呼ばない", async () => {
