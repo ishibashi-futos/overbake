@@ -1485,6 +1485,416 @@ task("task-b", {
   });
 });
 
+describe("executePlan verbose logging", () => {
+  let originalCwd: string;
+  let tempDir: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-verbose-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("executePlan with verbose logs plan details", async () => {
+    const bakefileContent = `
+task("a", () => {
+  console.log("task a");
+});
+
+task("b", { deps: ["a"] }, () => {
+  console.log("task b");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+
+    try {
+      const plan = await buildPlan("b");
+      await executePlan(plan, { verbose: true });
+
+      const verboseLogs = logs.filter((l) =>
+        ["targets:", "root:", "cwd:", "tasks:"].some((v) => l.includes(v)),
+      );
+
+      expect(verboseLogs.length).toBeGreaterThan(0);
+      expect(logs.some((l) => l.includes("targets:") && l.includes("b"))).toBe(
+        true,
+      );
+      expect(logs.some((l) => l.includes("tasks:") && l.includes("a"))).toBe(
+        true,
+      );
+      expect(logs.some((l) => l.includes("tasks:") && l.includes("b"))).toBe(
+        true,
+      );
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("executePlan with quiet does not log verbose output", async () => {
+    const bakefileContent = `task("a", () => {});`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+
+    try {
+      const plan = await buildPlan("a");
+      await executePlan(plan, { quiet: true, verbose: true });
+
+      const verboseLogs = logs.filter((l) =>
+        ["targets:", "root:", "cwd:", "tasks:"].some((v) => l.includes(v)),
+      );
+
+      expect(verboseLogs.length).toBe(0);
+    } finally {
+      console.log = originalLog;
+    }
+  });
+});
+
+describe("keepGoing / executePlan failure handling", () => {
+  let originalCwd: string;
+  let tempDir: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-keep-going-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("executePlan throws error with failure details when keep-going encounters failures", async () => {
+    const bakefileContent = `
+task("passing", () => {
+  console.log("passing task");
+});
+
+task("failing1", { deps: ["passing"] }, () => {
+  throw new Error("task failing1 error");
+});
+
+task("failing2", { deps: ["passing"] }, () => {
+  throw new Error("task failing2 error");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const plan = await buildPlan(["failing1", "failing2"]);
+
+    let thrownError: unknown;
+    try {
+      await executePlan(plan, { keepGoing: true });
+    } catch (error) {
+      thrownError = error;
+    }
+
+    expect(thrownError).toBeDefined();
+    expect(thrownError instanceof Error).toBe(true);
+    if (thrownError instanceof Error) {
+      expect(thrownError.message).toContain("Execution failed");
+      expect(thrownError.message).toContain("failing1");
+      expect(thrownError.message).toContain("failing2");
+    }
+  });
+
+  test("executePlan without keep-going throws error on first failure", async () => {
+    const bakefileContent = `
+task("first", () => {
+  throw new Error("first failed");
+});
+
+task("second", { deps: ["first"] }, () => {
+  console.log("second");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const plan = await buildPlan("second");
+
+    let thrownError: unknown;
+    try {
+      await executePlan(plan, { keepGoing: false });
+    } catch (error) {
+      thrownError = error;
+    }
+
+    expect(thrownError).toBeDefined();
+    expect(thrownError instanceof Error).toBe(true);
+    if (thrownError instanceof Error) {
+      expect(thrownError.message).toContain("first failed");
+    }
+  });
+
+  test("executePlan with keep-going continues after first failure", async () => {
+    const bakefileContent = `
+task("first", () => {
+  globalThis.__executionLog.push("first");
+  throw new Error("first failed");
+});
+
+task("second", () => {
+  globalThis.__executionLog.push("second");
+});
+
+task("third", () => {
+  globalThis.__executionLog.push("third");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const g = globalThis as Record<string, unknown>;
+    g.__executionLog = [];
+
+    const plan = await buildPlan(["first", "second", "third"]);
+
+    let thrownError: unknown;
+    try {
+      await executePlan(plan, { keepGoing: true });
+    } catch (error) {
+      thrownError = error;
+    }
+
+    expect(thrownError).toBeDefined();
+    const log = g.__executionLog as string[];
+    expect(log).toContain("first");
+    expect(log).toContain("second");
+    expect(log).toContain("third");
+    delete g.__executionLog;
+  });
+});
+
+describe("quiet flag - console suppression", () => {
+  let originalCwd: string;
+  let tempDir: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve("/tmp", `overbake-quiet-${Date.now()}-${Math.random()}`);
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("--quiet suppresses task console.log output", async () => {
+    const bakefileContent = `
+task("output-task", () => {
+  console.log("task output");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+
+    try {
+      const plan = await buildPlan("output-task");
+      await executePlan(plan, { quiet: true });
+
+      // Task output should be suppressed
+      const taskOutput = logs.filter((l) => l === "task output");
+      expect(taskOutput.length).toBe(0);
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("--quiet suppresses task console.error output", async () => {
+    const bakefileContent = `
+task("error-task", () => {
+  console.error("task error");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.join(" "));
+    };
+
+    try {
+      const plan = await buildPlan("error-task");
+      await executePlan(plan, { quiet: true });
+
+      // Task error output should be suppressed
+      const taskErrors = errors.filter((e) => e === "task error");
+      expect(taskErrors.length).toBe(0);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test("--quiet does not suppress logger.error output", async () => {
+    const bakefileContent = `
+task("failing-task", () => {
+  throw new Error("task failed");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.join(" "));
+    };
+
+    try {
+      const plan = await buildPlan("failing-task");
+      try {
+        await executePlan(plan, { quiet: true });
+      } catch {
+        // expected to fail
+      }
+
+      // Logger error output should be present
+      const hasFailedTask = errors.some(
+        (e) => e.includes("failing-task") && e.includes("failed"),
+      );
+      expect(hasFailedTask).toBe(true);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test("without --quiet, task console.log is visible", async () => {
+    const bakefileContent = `
+task("verbose-task", () => {
+  console.log("visible output");
+});
+`;
+
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+
+    try {
+      const plan = await buildPlan("verbose-task");
+      await executePlan(plan, { quiet: false });
+
+      // Task output should be visible
+      const taskOutput = logs.filter((l) => l === "visible output");
+      expect(taskOutput.length).toBeGreaterThan(0);
+    } finally {
+      console.log = originalLog;
+    }
+  });
+});
+
+describe("parseArgs - output control flags", () => {
+  test("parses --keep-going flag", () => {
+    const result = parseArgs(["build", "--keep-going"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.keepGoing).toBe(true);
+    }
+  });
+
+  test("parses --quiet flag", () => {
+    const result = parseArgs(["build", "--quiet"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.quiet).toBe(true);
+    }
+  });
+
+  test("parses --verbose flag", () => {
+    const result = parseArgs(["build", "--verbose"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.verbose).toBe(true);
+    }
+  });
+
+  test("parses --no-color flag", () => {
+    const result = parseArgs(["build", "--no-color"]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.noColor).toBe(true);
+    }
+  });
+
+  test("parses multiple output control flags", () => {
+    const result = parseArgs([
+      "build",
+      "--keep-going",
+      "--quiet",
+      "--verbose",
+      "--no-color",
+    ]);
+    expect(result.type).toBe("run");
+    if (result.type === "run") {
+      expect(result.flags.keepGoing).toBe(true);
+      expect(result.flags.quiet).toBe(true);
+      expect(result.flags.verbose).toBe(true);
+      expect(result.flags.noColor).toBe(true);
+    }
+  });
+
+  test("parses default command with output control flags", () => {
+    const result = parseArgs(["--keep-going", "--quiet"]);
+    expect(result.type).toBe("default");
+    if (result.type === "default") {
+      expect(result.flags.keepGoing).toBe(true);
+      expect(result.flags.quiet).toBe(true);
+    }
+  });
+});
+
 describe("parseArgs - list/help commands", () => {
   test("parses 'list' command", () => {
     const result = parseArgs(["list"]);

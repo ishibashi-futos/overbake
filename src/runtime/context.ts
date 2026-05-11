@@ -3,13 +3,17 @@ import { existsSync } from "node:fs";
 import { rm as nodeRm } from "node:fs/promises";
 import { resolve as nodePath } from "node:path";
 import type { CmdOptions, RmOptions, TaskContext } from "../types.ts";
+import { Logger } from "../ui/logger.ts";
 
 export function createTaskContext(params: {
   name: string;
   root: string;
   cwd?: string;
+  logger?: Logger;
 }): TaskContext {
-  const { name, root, cwd = root } = params;
+  const { name, root, cwd = root, logger } = params;
+  const log =
+    logger ?? new Logger({ quiet: false, verbose: false, noColor: false });
 
   return {
     name,
@@ -53,7 +57,7 @@ export function createTaskContext(params: {
       return nodePath(root, ...segments);
     },
     log(...args: unknown[]): void {
-      console.log(...args);
+      log.info(...args);
     },
   };
 }

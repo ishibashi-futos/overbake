@@ -95,17 +95,32 @@ export async function main(args: string[]): Promise<void> {
       }
 
       if (command.flags.watch) {
-        await executePlan(plan);
+        await executePlan(plan, {
+          keepGoing: command.flags.keepGoing,
+          quiet: command.flags.quiet,
+          verbose: command.flags.verbose,
+          noColor: command.flags.noColor,
+        });
         const paths = collectWatchPaths(plan.tasks, plan.bakefile);
         console.log(`Watching: ${paths.join(", ")}`);
         startWatch(paths, async () => {
-          await executePlan(plan);
+          await executePlan(plan, {
+            keepGoing: command.flags.keepGoing,
+            quiet: command.flags.quiet,
+            verbose: command.flags.verbose,
+            noColor: command.flags.noColor,
+          });
         });
         await new Promise<void>(() => {});
         return;
       }
 
-      await executePlan(plan);
+      await executePlan(plan, {
+        keepGoing: command.flags.keepGoing,
+        quiet: command.flags.quiet,
+        verbose: command.flags.verbose,
+        noColor: command.flags.noColor,
+      });
       return;
     }
 
@@ -123,19 +138,34 @@ export async function main(args: string[]): Promise<void> {
     }
 
     if (flags.watch) {
-      await executePlan(plan);
+      await executePlan(plan, {
+        keepGoing: flags.keepGoing,
+        quiet: flags.quiet,
+        verbose: flags.verbose,
+        noColor: flags.noColor,
+      });
       const paths = collectWatchPaths(plan.tasks, plan.bakefile);
       console.log(`Watching: ${paths.join(", ")}`);
       startWatch(paths, async () => {
         // 初回に build した plan を再利用して同じタスク列を再実行
-        await executePlan(plan);
+        await executePlan(plan, {
+          keepGoing: flags.keepGoing,
+          quiet: flags.quiet,
+          verbose: flags.verbose,
+          noColor: flags.noColor,
+        });
       });
       // Ctrl+C まで待機
       await new Promise<void>(() => {});
       return;
     }
 
-    await executePlan(plan);
+    await executePlan(plan, {
+      keepGoing: flags.keepGoing,
+      quiet: flags.quiet,
+      verbose: flags.verbose,
+      noColor: flags.noColor,
+    });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     let exitCode = 1;

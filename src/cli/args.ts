@@ -20,6 +20,10 @@ export interface Flags {
   dryRun: boolean;
   explain: boolean;
   watch: boolean;
+  keepGoing: boolean;
+  quiet: boolean;
+  verbose: boolean;
+  noColor: boolean;
 }
 
 export interface RunCommand {
@@ -55,12 +59,20 @@ export function parseArgs(args: string[]): Command {
     !command ||
     command === "--dry-run" ||
     command === "--explain" ||
-    command === "--watch"
+    command === "--watch" ||
+    command === "--keep-going" ||
+    command === "--quiet" ||
+    command === "--verbose" ||
+    command === "--no-color"
   ) {
     const flags: Flags = {
       dryRun: args.includes("--dry-run"),
       explain: args.includes("--explain"),
       watch: args.includes("--watch"),
+      keepGoing: args.includes("--keep-going"),
+      quiet: args.includes("--quiet"),
+      verbose: args.includes("--verbose"),
+      noColor: args.includes("--no-color"),
     };
     return { type: "default", flags };
   }
@@ -81,7 +93,11 @@ export function parseArgs(args: string[]): Command {
       !arg.startsWith("-") &&
       arg !== "--dry-run" &&
       arg !== "--explain" &&
-      arg !== "--watch"
+      arg !== "--watch" &&
+      arg !== "--keep-going" &&
+      arg !== "--quiet" &&
+      arg !== "--verbose" &&
+      arg !== "--no-color"
     ) {
       taskNames.push(arg);
     }
@@ -91,6 +107,10 @@ export function parseArgs(args: string[]): Command {
     dryRun: args.includes("--dry-run"),
     explain: args.includes("--explain"),
     watch: args.includes("--watch"),
+    keepGoing: args.includes("--keep-going"),
+    quiet: args.includes("--quiet"),
+    verbose: args.includes("--verbose"),
+    noColor: args.includes("--no-color"),
   };
 
   return { type: "run", taskNames, flags };
