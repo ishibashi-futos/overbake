@@ -12,6 +12,11 @@ import { discoverBakefile } from "../src/bakefile/discover.ts";
 import { loadBakefile } from "../src/bakefile/loader.ts";
 import { TaskRegistry } from "../src/bakefile/registry.ts";
 import { parseArgs } from "../src/cli/args.ts";
+import {
+  generateBashCompletion,
+  generateFishCompletion,
+  generateZshCompletion,
+} from "../src/cli/completions.ts";
 import { main } from "../src/cli/main.ts";
 import { resolveTasks } from "../src/graph/resolver.ts";
 import { init } from "../src/init/init.ts";
@@ -2365,6 +2370,200 @@ describe("confirm プロンプト (#14) - executePlan confirm 動作", () => {
 
     expect(caughtError).toBeDefined();
     expect((caughtError as Error & { exitCode?: number }).exitCode).toBe(2);
+  });
+});
+
+// issue #16: シェル補完スクリプト生成 - parseArgs
+describe("シェル補完 (#16) - parseArgs", () => {
+  test('"completions zsh" を解析すると type=completions, shell=zsh になる', () => {
+    const result = parseArgs(["completions", "zsh"]);
+    expect(result.type).toBe("completions");
+    if (result.type === "completions") {
+      expect(result.shell).toBe("zsh");
+    }
+  });
+
+  test('"completions bash" を解析すると type=completions, shell=bash になる', () => {
+    const result = parseArgs(["completions", "bash"]);
+    expect(result.type).toBe("completions");
+    if (result.type === "completions") {
+      expect(result.shell).toBe("bash");
+    }
+  });
+
+  test('"completions fish" を解析すると type=completions, shell=fish になる', () => {
+    const result = parseArgs(["completions", "fish"]);
+    expect(result.type).toBe("completions");
+    if (result.type === "completions") {
+      expect(result.shell).toBe("fish");
+    }
+  });
+
+  test('"__complete tasks" を解析すると type=complete, subcommand=tasks になる', () => {
+    const result = parseArgs(["__complete", "tasks"]);
+    expect(result.type).toBe("complete");
+    if (result.type === "complete") {
+      expect(result.subcommand).toBe("tasks");
+    }
+  });
+});
+
+// issue #16: シェル補完スクリプト生成 - completions.ts
+describe("シェル補完 (#16) - 補完スクリプト生成", () => {
+  test("generateZshCompletion は #compdef bake を含む", () => {
+    const script = generateZshCompletion();
+    expect(script).toContain("#compdef bake");
+  });
+
+  test("generateZshCompletion は bake __complete tasks を含む", () => {
+    const script = generateZshCompletion();
+    expect(script).toContain("bake __complete tasks");
+  });
+
+  test("generateZshCompletion はサブコマンドを含む", () => {
+    const script = generateZshCompletion();
+    expect(script).toContain("init");
+    expect(script).toContain("list");
+    expect(script).toContain("completions");
+  });
+
+  test("generateZshCompletion はフラグを含む", () => {
+    const script = generateZshCompletion();
+    expect(script).toContain("--dry-run");
+    expect(script).toContain("--watch");
+    expect(script).toContain("--help");
+  });
+
+  test("generateBashCompletion は complete -F _bake bake を含む", () => {
+    const script = generateBashCompletion();
+    expect(script).toContain("complete -F _bake bake");
+  });
+
+  test("generateBashCompletion は bake __complete tasks を含む", () => {
+    const script = generateBashCompletion();
+    expect(script).toContain("bake __complete tasks");
+  });
+
+  test("generateBashCompletion はサブコマンドを含む", () => {
+    const script = generateBashCompletion();
+    expect(script).toContain("init");
+    expect(script).toContain("list");
+    expect(script).toContain("completions");
+  });
+
+  test("generateFishCompletion は complete -c bake を含む", () => {
+    const script = generateFishCompletion();
+    expect(script).toContain("complete -c bake");
+  });
+
+  test("generateFishCompletion は bake __complete tasks を含む", () => {
+    const script = generateFishCompletion();
+    expect(script).toContain("bake __complete tasks");
+  });
+});
+
+// issue #16: シェル補完スクリプト生成 - renderGlobalHelp
+describe("シェル補完 (#16) - renderGlobalHelp に completions の案内が含まれる", () => {
+  test("renderGlobalHelp は completions を含む", () => {
+    const output = renderGlobalHelp();
+    expect(output).toContain("completions");
+  });
+});
+
+// issue #16: シェル補完スクリプト生成 - main 統合テスト
+describe("シェル補完 (#16) - main 統合テスト", () => {
+  let originalCwd: string;
+  let tempDir: string;
+  let logs: string[] = [];
+  let errors: string[] = [];
+  let originalLog: typeof console.log;
+  let originalError: typeof console.error;
+  let originalExit: typeof process.exit;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-completions-test-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+
+    logs = [];
+    errors = [];
+    originalLog = console.log;
+    originalError = console.error;
+    originalExit = process.exit;
+
+    console.log = (...args: string[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+    console.error = (...args: string[]) => {
+      errors.push(args.join(" "));
+    };
+    (process.exit as unknown) = () => {};
+  });
+
+  afterEach(() => {
+    console.log = originalLog;
+    console.error = originalError;
+    process.exit = originalExit;
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("main completions zsh は zsh 補完スクリプトを出力する", async () => {
+    await main(["completions", "zsh"]);
+    const output = logs.join("\n");
+    expect(output).toContain("#compdef bake");
+  });
+
+  test("main completions bash は bash 補完スクリプトを出力する", async () => {
+    await main(["completions", "bash"]);
+    const output = logs.join("\n");
+    expect(output).toContain("complete -F _bake bake");
+  });
+
+  test("main completions fish は fish 補完スクリプトを出力する", async () => {
+    await main(["completions", "fish"]);
+    const output = logs.join("\n");
+    expect(output).toContain("complete -c bake");
+  });
+
+  test("main completions 未対応シェルは exitCode=2 で終了する", async () => {
+    let exitCode: number | undefined;
+    (process.exit as unknown) = (code?: number) => {
+      exitCode = code;
+    };
+
+    await main(["completions", "unknown-shell"]);
+    expect(exitCode).toBe(2);
+  });
+
+  test("main __complete tasks は Bakefile.ts のタスク名を1行1件で出力する", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `task("build", () => {});
+task("test", () => {});
+task("clean", () => {});`,
+    );
+
+    await main(["__complete", "tasks"]);
+
+    expect(logs).toContain("build");
+    expect(logs).toContain("test");
+    expect(logs).toContain("clean");
+  });
+
+  test("main __complete tasks は Bakefile.ts が無くてもエラーにならず何も出力しない", async () => {
+    // tempDir には Bakefile.ts を作らない
+    await main(["__complete", "tasks"]);
+
+    expect(logs).toHaveLength(0);
+    expect(errors).toHaveLength(0);
   });
 });
 

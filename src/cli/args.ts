@@ -33,12 +33,24 @@ export interface RunCommand {
   flags: Flags;
 }
 
+export interface CompletionsCommand {
+  type: "completions";
+  shell: string;
+}
+
+export interface CompleteCommand {
+  type: "complete";
+  subcommand: string;
+}
+
 export type Command =
   | InitCommand
   | ListCommand
   | HelpCommand
   | DefaultCommand
-  | RunCommand;
+  | RunCommand
+  | CompletionsCommand
+  | CompleteCommand;
 
 export function parseArgs(args: string[]): Command {
   const [command] = args;
@@ -54,6 +66,16 @@ export function parseArgs(args: string[]): Command {
   if (command === "--help") {
     const taskName = args[1];
     return { type: "help", taskName };
+  }
+
+  if (command === "completions") {
+    const shell = args[1] ?? "";
+    return { type: "completions", shell };
+  }
+
+  if (command === "__complete") {
+    const subcommand = args[1] ?? "";
+    return { type: "complete", subcommand };
   }
 
   if (

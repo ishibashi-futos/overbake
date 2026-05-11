@@ -22,11 +22,48 @@ import {
 } from "../ui/help.ts";
 import { collectWatchPaths, startWatch } from "../watch/watcher.ts";
 import { parseArgs } from "./args.ts";
+import {
+  generateBashCompletion,
+  generateFishCompletion,
+  generateZshCompletion,
+} from "./completions.ts";
 import { CliError } from "./error.ts";
 
 export async function main(args: string[]): Promise<void> {
   try {
     const command = parseArgs(args);
+
+    if (command.type === "completions") {
+      if (command.shell === "zsh") {
+        console.log(generateZshCompletion());
+      } else if (command.shell === "bash") {
+        console.log(generateBashCompletion());
+      } else if (command.shell === "fish") {
+        console.log(generateFishCompletion());
+      } else {
+        throw new CliError(
+          `未対応のシェルです: "${command.shell}"。zsh / bash / fish を指定してください。`,
+          2,
+        );
+      }
+      return;
+    }
+
+    if (command.type === "complete") {
+      if (command.subcommand === "tasks") {
+        try {
+          const bakefile = discoverBakefile();
+          const registry = new TaskRegistry();
+          await loadBakefile(bakefile, registry);
+          for (const task of registry.all()) {
+            console.log(task.name);
+          }
+        } catch {
+          // Bakefile.ts が無いか読み込み失敗の場合は何も出力しない
+        }
+      }
+      return;
+    }
 
     if (command.type === "init") {
       await init();

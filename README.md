@@ -42,6 +42,11 @@ bake -l
 # ヘルプを表示
 bake --help
 bake --help build
+
+# シェル補完スクリプトを出力
+bake completions zsh > ~/.zsh/completions/_bake   # zsh
+bake completions bash > ~/.bash_completion.d/bake # bash
+bake completions fish > ~/.config/fish/completions/bake.fish # fish
 ```
 
 ### Bakefile.ts の書き方

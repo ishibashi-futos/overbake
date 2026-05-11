@@ -24,6 +24,7 @@ Commands:
   -l, list               List available tasks
   --help                 Show this help message
   --help <task>          Show help for a specific task
+  completions <shell>    Output shell completion script (zsh/bash/fish)
 
 Options (for run):
   --dry-run              Print tasks without executing
