@@ -29,6 +29,12 @@ import {
   DuplicateTaskError,
   TaskNotFoundError,
 } from "../src/shared/errors.ts";
+import {
+  renderGlobalHelp,
+  renderTaskHelp,
+  renderTaskList,
+  renderTaskNotFound,
+} from "../src/ui/help.ts";
 import { collectWatchPaths, startWatch } from "../src/watch/watcher.ts";
 
 describe("parseArgs", () => {
@@ -1141,5 +1147,263 @@ task("task-b", {
     const task = registry.get("group");
     expect(task?.isMeta).toBe(true);
     expect(typeof task?.fn).toBe("function");
+  });
+});
+
+describe("parseArgs - list/help commands", () => {
+  test("parses 'list' command", () => {
+    const result = parseArgs(["list"]);
+    expect(result.type).toBe("list");
+  });
+
+  test("parses '-l' as list command", () => {
+    const result = parseArgs(["-l"]);
+    expect(result.type).toBe("list");
+  });
+
+  test("parses '--help' without task name", () => {
+    const result = parseArgs(["--help"]);
+    expect(result.type).toBe("help");
+    if (result.type === "help") {
+      expect(result.taskName).toBeUndefined();
+    }
+  });
+
+  test("parses '--help <taskname>' as help with task", () => {
+    const result = parseArgs(["--help", "build"]);
+    expect(result.type).toBe("help");
+    if (result.type === "help") {
+      expect(result.taskName).toBe("build");
+    }
+  });
+
+  test("parses task --help as help with task", () => {
+    const result = parseArgs(["build", "--help"]);
+    expect(result.type).toBe("help");
+    if (result.type === "help") {
+      expect(result.taskName).toBe("build");
+    }
+  });
+});
+
+describe("UI help rendering", () => {
+  test("renderTaskList shows task names and descriptions", () => {
+    const tasks = [
+      { name: "build", fn: () => {}, options: { desc: "Build the project" } },
+      { name: "test", fn: () => {}, options: { desc: "Run tests" } },
+    ];
+    const output = renderTaskList(tasks);
+    expect(output).toContain("build");
+    expect(output).toContain("Build the project");
+    expect(output).toContain("test");
+    expect(output).toContain("Run tests");
+  });
+
+  test("renderTaskList handles empty task list", () => {
+    const output = renderTaskList([]);
+    expect(output).toBe("No tasks found.");
+  });
+
+  test("renderGlobalHelp shows usage and commands", () => {
+    const output = renderGlobalHelp();
+    expect(output).toContain("Usage:");
+    expect(output).toContain("init");
+    expect(output).toContain("list");
+    expect(output).toContain("--help");
+    expect(output).toContain("--dry-run");
+  });
+
+  test("renderTaskHelp shows task details", () => {
+    const task = {
+      name: "build",
+      fn: () => {},
+      options: {
+        desc: "Build project",
+        deps: ["setup"],
+        inputs: ["src/**"],
+        outputs: ["dist"],
+        env: ["NODE_ENV"],
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("build");
+    expect(output).toContain("Build project");
+    expect(output).toContain("setup");
+    expect(output).toContain("src/**");
+    expect(output).toContain("dist");
+    expect(output).toContain("NODE_ENV");
+  });
+
+  test("renderTaskNotFound suggests similar tasks", () => {
+    const tasks = [
+      { name: "build", fn: () => {}, options: {} },
+      { name: "build-prod", fn: () => {}, options: {} },
+      { name: "test", fn: () => {}, options: {} },
+    ];
+    const output = renderTaskNotFound("build-dev", tasks);
+    expect(output).toContain("build-dev");
+    expect(output).toContain("build-prod");
+    expect(output).toContain("build");
+  });
+
+  test("renderTaskNotFound shows 'bake --help' when no suggestions", () => {
+    const tasks = [
+      { name: "build", fn: () => {}, options: {} },
+      { name: "test", fn: () => {}, options: {} },
+    ];
+    const output = renderTaskNotFound("xyz", tasks);
+    expect(output).toContain("Task not found: xyz");
+    expect(output).toContain("bake --help");
+    expect(output).not.toContain("bun bake");
+  });
+});
+
+describe("CLI help/list integration", () => {
+  let originalCwd: string;
+  let tempDir: string;
+  let logs: string[] = [];
+  let errors: string[] = [];
+  let originalLog: typeof console.log;
+  let originalError: typeof console.error;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tempDir = resolve(
+      "/tmp",
+      `overbake-cli-test-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDir, { recursive: true });
+    process.chdir(tempDir);
+
+    logs = [];
+    errors = [];
+    originalLog = console.log;
+    originalError = console.error;
+    console.log = (...args: string[]) => {
+      logs.push(args.join(" "));
+      originalLog(...args);
+    };
+    console.error = (...args: string[]) => {
+      errors.push(args.join(" "));
+      originalError(...args);
+    };
+  });
+
+  afterEach(() => {
+    console.log = originalLog;
+    console.error = originalError;
+    process.chdir(originalCwd);
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  test("main list shows all tasks", async () => {
+    const bakefileContent = `
+task("build", { desc: "Build the project" }, () => {});
+task("test", { desc: "Run tests" }, () => {});
+task("clean", { desc: "Clean output" }, () => {});
+`;
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main(["list"]);
+
+    const output = logs.join("\n");
+    expect(output).toContain("build");
+    expect(output).toContain("test");
+    expect(output).toContain("clean");
+  });
+
+  test("main -l shows all tasks", async () => {
+    const bakefileContent = `
+task("setup", { desc: "Setup environment" }, () => {});
+task("deploy", { desc: "Deploy app" }, () => {});
+`;
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main(["-l"]);
+
+    const output = logs.join("\n");
+    expect(output).toContain("setup");
+    expect(output).toContain("deploy");
+  });
+
+  test("main --help shows global help", async () => {
+    const bakefileContent = `task("dummy", () => {});`;
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main(["--help"]);
+
+    const output = logs.join("\n");
+    expect(output).toContain("Usage:");
+    expect(output).toContain("init");
+    expect(output).toContain("list");
+  });
+
+  test("main --help task shows task details", async () => {
+    const bakefileContent = `
+task("compile", {
+  desc: "Compile TypeScript",
+  inputs: ["src/**"],
+  outputs: ["dist"],
+  deps: ["clean"],
+  env: ["TS_NODE_PROJECT"]
+}, () => {});
+`;
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main(["--help", "compile"]);
+
+    const output = logs.join("\n");
+    expect(output).toContain("compile");
+    expect(output).toContain("Compile TypeScript");
+    expect(output).toContain("src/**");
+    expect(output).toContain("dist");
+    expect(output).toContain("clean");
+    expect(output).toContain("TS_NODE_PROJECT");
+  });
+
+  test("main --help <missing> shows error with suggestions and exits with code 2", async () => {
+    const bakefileContent = `
+task("build", { desc: "Build" }, () => {});
+task("build-prod", { desc: "Build for production" }, () => {});
+task("test", { desc: "Test" }, () => {});
+`;
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    const originalExit = process.exit;
+    let exitCode: number | undefined;
+    (process.exit as unknown) = (code?: number) => {
+      exitCode = code;
+    };
+
+    try {
+      await main(["--help", "build-dev"]);
+    } finally {
+      process.exit = originalExit;
+    }
+
+    const output = errors.join("\n");
+    expect(output).toContain("build-dev");
+    expect(output).toContain("Did you mean");
+    expect(output).toContain("build");
+    expect(exitCode).toBe(2);
+  });
+
+  test("main task --help also works for help", async () => {
+    const bakefileContent = `
+task("format", {
+  desc: "Format code",
+  inputs: ["src/**"],
+  deps: []
+}, () => {});
+`;
+    writeFileSync("Bakefile.ts", bakefileContent);
+
+    await main(["format", "--help"]);
+
+    const output = logs.join("\n");
+    expect(output).toContain("format");
+    expect(output).toContain("Format code");
   });
 });

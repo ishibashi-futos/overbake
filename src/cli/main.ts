@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 
+import { discoverBakefile } from "../bakefile/discover.ts";
+import { loadBakefile } from "../bakefile/loader.ts";
+import { TaskRegistry } from "../bakefile/registry.ts";
 import { init } from "../init/init.ts";
 import {
   buildPlan,
@@ -7,8 +10,15 @@ import {
   printDryRun,
   printExplain,
 } from "../runtime/executor.ts";
+import {
+  renderGlobalHelp,
+  renderTaskHelp,
+  renderTaskList,
+  renderTaskNotFound,
+} from "../ui/help.ts";
 import { collectWatchPaths, startWatch } from "../watch/watcher.ts";
 import { parseArgs } from "./args.ts";
+import { CliError } from "./error.ts";
 
 export async function main(args: string[]): Promise<void> {
   try {
@@ -16,6 +26,35 @@ export async function main(args: string[]): Promise<void> {
 
     if (command.type === "init") {
       await init();
+      return;
+    }
+
+    if (command.type === "list") {
+      const bakefile = discoverBakefile();
+      const registry = new TaskRegistry();
+      await loadBakefile(bakefile, registry);
+      const tasks = registry.all();
+      console.log(renderTaskList(tasks));
+      return;
+    }
+
+    if (command.type === "help") {
+      if (!command.taskName) {
+        console.log(renderGlobalHelp());
+        return;
+      }
+
+      const bakefile = discoverBakefile();
+      const registry = new TaskRegistry();
+      await loadBakefile(bakefile, registry);
+      const tasks = registry.all();
+      const task = tasks.find((t) => t.name === command.taskName);
+
+      if (!task) {
+        throw new CliError(renderTaskNotFound(command.taskName, tasks), 2);
+      }
+
+      console.log(renderTaskHelp(task));
       return;
     }
 
@@ -48,7 +87,8 @@ export async function main(args: string[]): Promise<void> {
     await executePlan(plan);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
+    const exitCode = error instanceof CliError ? error.exitCode : 1;
+    process.exit(exitCode);
   }
 }
 
