@@ -30,18 +30,16 @@ const test = task("test", { desc: "テストを実行" }, async ({ cmd }) => {
   await cmd("bun", ["test"]);
 });
 
-task(
+task.each(
   "sanity",
-  { desc: "型チェック・フォーマット・ビルド・テストをまとめて実行" },
-  async ({ runEach }) => {
-    await runEach(
-      { done: "✨ All checks passed! You're good to go." },
-      typecheck,
-      fmt,
-      build,
-      test,
-    );
+  {
+    desc: "型チェック・フォーマット・ビルド・テストをまとめて実行",
+    done: "✨ All checks passed! You're good to go.",
   },
+  typecheck,
+  fmt,
+  build,
+  test,
 );
 
 task.default(build);

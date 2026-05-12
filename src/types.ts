@@ -10,7 +10,17 @@ export interface TaskOptions {
   after?: (
     ctx: HookContext & { ok: boolean; durationMs: number },
   ) => void | Promise<void>;
+  /**
+   * task.each() で宣言された工程列（グラフ描画などのツール用の静的記述）。
+   * 実行は生成された fn が ctx.runEach で行う。
+   */
+  each?: RunEachStep[];
 }
+
+/** task.each() で宣言された 1 工程の静的記述 */
+export type RunEachStep =
+  | { kind: "task"; name: string; desc?: string }
+  | { kind: "command"; label: string };
 
 export interface CmdOptions {
   cwd?: string;
@@ -34,6 +44,9 @@ export interface RunEachOptions {
   /** true なら最初の失敗で中断せず、全件実行してから失敗をまとめて報告する */
   keepGoing?: boolean;
 }
+
+/** task.each() の先頭に渡せるオプション（省略可）。TaskOptions と RunEachOptions の和。 */
+export type TaskEachOptions = TaskOptions & RunEachOptions;
 
 export interface TaskContext {
   name: string;

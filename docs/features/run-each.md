@@ -45,10 +45,55 @@ Running sanity...
 ✨ All checks passed!
 ```
 
+## 宣言的に定義する: `task.each()`
+
+「`runEach` のパイプラインをそのまま 1 つの名前付きタスクにしたい」場合は、`ctx.runEach` を本体で
+呼ぶ代わりに `task.each()` を使えます。`task.default()` と並ぶ登録ヘルパーで、戻り値はタスクハンドルです。
+
+```typescript
+/// <reference path="./Bakefile.d.ts" />
+
+const typecheck = task("typecheck", { desc: "型チェック" }, async ({ cmd }) => {
+  await cmd("bunx", ["tsc", "--noEmit"]);
+});
+const fmt = task("fmt", { desc: "フォーマットチェック" }, async ({ cmd }) => {
+  await cmd("bunx", ["biome", "check", "."]);
+});
+const build = task("build", { deps: ["clean"] }, async ({ cmd }) => {
+  await cmd("bun", ["build", "src/cli/main.ts", "--compile"]);
+});
+const test = task("test", async ({ cmd }) => {
+  await cmd("bun", ["test"]);
+});
+
+task.each(
+  "sanity",
+  { desc: "まとめて検証", done: "✨ All checks passed!" },
+  typecheck,
+  fmt,
+  build,
+  test,
+);
+```
+
+- 先頭にオプションを置けます（`{ desc, done, keepGoing }` など。`done`/`keepGoing` はそのまま `runEach` に渡り、
+  `desc` などは生成されるタスクのオプションになります）。省略可。
+- 実行時の挙動は `ctx.runEach` を本体で呼ぶのと同じ（出力抑制・fail-fast・`done` メッセージ）。
+- **違いは `bake <task> --graph` に工程が現れること。** `task.each` で宣言した工程は静的記述として
+  タスク定義に残るため、`mermaid` / `dot` 出力に `工程 --> タスク` の辺として描かれます
+  （コマンドタプル `["bun", ["test"]]` はコマンド文字列をラベルにしたノードになります）。
+  本体で `ctx.runEach` を呼ぶ形では工程は実行時にしか分からないため、グラフには出ません。
+- `deps` は **展開されません**（`runEach` と同じ）。`build` の `clean` 依存などは `bake build` 側で解決されます。
+  グラフ上の `build --> sanity` はあくまで表示用の辺で、`bake sanity` 実行時に `clean` を走らせるわけではありません。
+- 工程に渡すタスクハンドルは、その `task.each(...)` 呼び出しより前に定義しておく必要があります。
+
 ## シグネチャ
 
 ```typescript
 ctx.runEach(...items: (RunEachOptions | RunEachItem)[]): Promise<void>
+
+task.each(name: string, ...items: (TaskEachOptions | RunEachItem)[]): Task
+type TaskEachOptions = TaskOptions & RunEachOptions;
 
 type RunEachCommand = readonly [string, (readonly string[])?]; // ctx.cmd と同じ [command, args?]
 type RunEachItem = Task | RunEachCommand;

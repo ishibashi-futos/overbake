@@ -1,5 +1,5 @@
+import { commandLabel, isCommand, isTask } from "../shared/run-each.ts";
 import type {
-  RunEachCommand,
   RunEachItem,
   RunEachOptions,
   Task,
@@ -22,19 +22,6 @@ export interface RunEachDeps {
 }
 
 const SEPARATOR = "-".repeat(50);
-
-function isCommand(x: RunEachOptions | RunEachItem): x is RunEachCommand {
-  return Array.isArray(x);
-}
-
-function isTask(x: RunEachOptions | RunEachItem): x is Task {
-  return !Array.isArray(x) && typeof (x as Task).fn === "function";
-}
-
-function commandLabel(cmd: RunEachCommand): string {
-  const [command, args] = cmd;
-  return args && args.length > 0 ? `${command} ${args.join(" ")}` : command;
-}
 
 function taskLabel(task: Task): string {
   const desc = task.options?.desc;

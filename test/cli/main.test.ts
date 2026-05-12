@@ -676,6 +676,58 @@ task("test", { deps: ["build"] }, () => {});`,
     expect(output).toContain("flowchart LR");
   });
 
+  test("bake <task> --graph は task.each の工程を辺として出力し、関数は実行しない", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `const a = task("a", () => { globalThis.__eachA = true; });
+const b = task("b", () => { globalThis.__eachB = true; });
+task.each("sanity", { done: "ok" }, a, b, ["bun", ["test"]]);`,
+    );
+
+    const g = globalThis as Record<string, unknown>;
+    g.__eachA = false;
+    g.__eachB = false;
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+
+    await main(["sanity", "--graph"]);
+
+    console.log = orig;
+
+    const output = lines.join("\n");
+    expect(output).toContain("flowchart LR");
+    expect(output).toContain("a --> sanity");
+    expect(output).toContain("b --> sanity");
+    expect(output).toContain('bun_test["bun test"] --> sanity');
+    expect(g.__eachA).toBe(false);
+    expect(g.__eachB).toBe(false);
+    delete g.__eachA;
+    delete g.__eachB;
+  });
+
+  test("bake --graph（タスク指定なし）も task.each の工程を含む", async () => {
+    writeFileSync(
+      "Bakefile.ts",
+      `const a = task("a", () => {});
+const b = task("b", () => {});
+task.each("sanity", a, b);`,
+    );
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+
+    await main(["--graph"]);
+
+    console.log = orig;
+
+    const output = lines.join("\n");
+    expect(output).toContain("a --> sanity");
+    expect(output).toContain("b --> sanity");
+  });
+
   test("未対応フォーマット --graph=svg は exit code 2 で終了する", async () => {
     writeFileSync("Bakefile.ts", `task("build", () => {});`);
 

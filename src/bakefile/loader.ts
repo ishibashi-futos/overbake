@@ -1,4 +1,10 @@
-import type { Task, TaskFunction, TaskOptions } from "../types.ts";
+import type {
+  RunEachItem,
+  Task,
+  TaskEachOptions,
+  TaskFunction,
+  TaskOptions,
+} from "../types.ts";
 import type { TaskRegistry } from "./registry.ts";
 
 declare global {
@@ -8,6 +14,7 @@ declare global {
     fn?: TaskFunction,
   ) => Task) & {
     default: (task: Task) => void;
+    each: (name: string, ...args: (TaskEachOptions | RunEachItem)[]) => Task;
   };
 }
 
@@ -27,6 +34,8 @@ export async function loadBakefile(
     taskFn.default = (task: Task) => {
       registry.setDefault(task.name);
     };
+
+    taskFn.each = (name, ...args) => registry.registerEach(name, ...args);
 
     globalThis.task = taskFn;
 

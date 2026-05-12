@@ -89,6 +89,27 @@ task.default(clean);`,
     }).toThrow();
   });
 
+  test("registers a runEach task via task.each()", async () => {
+    const bakefilePath = resolve(tmp.path, "test-bakefile.ts");
+    writeFileSync(
+      bakefilePath,
+      `const a = task("a", () => {});
+const b = task("b", () => {});
+task.each("sanity", { desc: "まとめて検証" }, a, b);`,
+    );
+
+    const registry = new TaskRegistry();
+    await loadBakefile(bakefilePath, registry);
+
+    const sanity = registry.get("sanity");
+    expect(sanity?.isMeta).toBe(false);
+    expect(sanity?.options?.desc).toBe("まとめて検証");
+    expect(sanity?.options?.each).toEqual([
+      { kind: "task", name: "a", desc: undefined },
+      { kind: "task", name: "b", desc: undefined },
+    ]);
+  });
+
   test("restores globalThis.task.default after successful import", async () => {
     const bakefilePath = resolve(tmp.path, "test-bakefile.ts");
     writeFileSync(bakefilePath, 'export default "test";');

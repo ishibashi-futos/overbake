@@ -61,6 +61,25 @@ describe("printDryRun / printExplain", () => {
   });
 });
 
+describe("task.each と実行プラン", () => {
+  const tmp = useTempDir("overbake-each", { chdir: true });
+
+  test("task.each タスクの plan.tasks は本体 1 件のみ（工程は deps に展開されない）", async () => {
+    writeFileSync(
+      resolve(tmp.path, "Bakefile.ts"),
+      `const a = task("a", () => {});
+const b = task("b", () => {});
+task.each("sanity", a, b);`,
+    );
+    const plan = await buildPlan("sanity");
+    expect(plan.tasks.map((t) => t.name)).toEqual(["sanity"]);
+    expect(plan.tasks[0]?.options?.each).toEqual([
+      { kind: "task", name: "a", desc: undefined },
+      { kind: "task", name: "b", desc: undefined },
+    ]);
+  });
+});
+
 describe("executePlan verbose logging", () => {
   const tmp = useTempDir("overbake-verbose", { chdir: true });
 

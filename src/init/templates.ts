@@ -89,11 +89,24 @@ interface TaskOptions {
   ) => void | Promise<void>;
 }
 
+/** task.each() の先頭に渡せるオプション（省略可） */
+type TaskEachOptions = TaskOptions & RunEachOptions;
+
 declare function task(name: string, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions): Task;
 
 declare namespace task {
+  /**
+   * 複数のタスク・コマンドを順に実行するタスクを宣言的に登録する。
+   * 工程は \`bake <task> --graph\` の出力にも辺として現れる。
+   * 先頭にオプション（\`{ desc, done, keepGoing, ... }\`）を置ける。省略可。
+   */
+  export function each(
+    name: string,
+    ...items: (TaskEachOptions | RunEachItem)[]
+  ): Task;
+
   function defaultTask(task: Task): void;
 
   export { defaultTask as default };

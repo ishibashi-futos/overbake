@@ -2,7 +2,16 @@ import {
   DuplicateDefaultTaskError,
   DuplicateTaskError,
 } from "../shared/errors.ts";
-import type { TaskDefinition, TaskFunction, TaskOptions } from "../types.ts";
+import { commandLabel, isCommand, isTask } from "../shared/run-each.ts";
+import type {
+  RunEachItem,
+  RunEachOptions,
+  RunEachStep,
+  TaskDefinition,
+  TaskEachOptions,
+  TaskFunction,
+  TaskOptions,
+} from "../types.ts";
 
 export class TaskRegistry {
   private tasks = new Map<string, TaskDefinition>();
@@ -41,6 +50,45 @@ export class TaskRegistry {
     };
     this.tasks.set(name, definition);
     return definition;
+  }
+
+  /**
+   * task.each(): 複数工程を順に実行するタスクを宣言的に登録する。
+   * 工程列は options.each に静的記述として保存され（グラフ描画用）、
+   * 生成された fn が ctx.runEach で実際の実行を行う。
+   */
+  registerEach(
+    name: string,
+    ...args: (TaskEachOptions | RunEachItem)[]
+  ): TaskDefinition {
+    let opts: TaskEachOptions = {};
+    let items = args as RunEachItem[];
+    const first = args[0];
+    if (first !== undefined && !isCommand(first) && !isTask(first)) {
+      opts = first as TaskEachOptions;
+      items = args.slice(1) as RunEachItem[];
+    }
+
+    const { done, keepGoing, ...taskOptions } = opts;
+
+    const each: RunEachStep[] = items.map((item) =>
+      isCommand(item)
+        ? { kind: "command", label: commandLabel(item) }
+        : { kind: "task", name: item.name, desc: item.options?.desc },
+    );
+
+    const runEachOptions: RunEachOptions = {};
+    if (done !== undefined) runEachOptions.done = done;
+    if (keepGoing !== undefined) runEachOptions.keepGoing = keepGoing;
+    const hasRunEachOptions = done !== undefined || keepGoing !== undefined;
+
+    const fn: TaskFunction = async (ctx) => {
+      await ctx.runEach(
+        ...(hasRunEachOptions ? [runEachOptions, ...items] : items),
+      );
+    };
+
+    return this.register(name, { ...taskOptions, each }, fn);
   }
 
   get(name: string): TaskDefinition | undefined {

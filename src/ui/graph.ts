@@ -1,4 +1,4 @@
-import type { TaskDefinition } from "../types.ts";
+import type { RunEachStep, TaskDefinition } from "../types.ts";
 
 // `:` などの特殊文字を含む名前を mermaid のノード ID として安全にする
 function mermaidNode(name: string): string {
@@ -11,17 +11,41 @@ function dotQuote(name: string): string {
   return `"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+// task.each の工程記述からエッジ始点となるノード名を取り出す
+function stepNode(step: RunEachStep): string {
+  return step.kind === "task" ? step.name : step.label;
+}
+
+interface Edge {
+  from: string;
+  to: string;
+}
+
+// 各タスクの「自分に向かう辺」（deps と task.each の工程）を重複なく列挙する
+function incomingEdges(tasks: TaskDefinition[]): Edge[] {
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+  const add = (from: string, to: string) => {
+    const key = JSON.stringify([from, to]);
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({ from, to });
+  };
+  for (const task of tasks) {
+    for (const dep of task.options?.deps ?? []) add(dep, task.name);
+    for (const step of task.options?.each ?? []) add(stepNode(step), task.name);
+  }
+  return edges;
+}
+
 export function renderMermaid(tasks: TaskDefinition[]): string {
   const lines = ["flowchart LR"];
   const nodesInEdges = new Set<string>();
 
-  for (const task of tasks) {
-    const deps = task.options?.deps ?? [];
-    for (const dep of deps) {
-      lines.push(`  ${mermaidNode(dep)} --> ${mermaidNode(task.name)}`);
-      nodesInEdges.add(dep);
-      nodesInEdges.add(task.name);
-    }
+  for (const { from, to } of incomingEdges(tasks)) {
+    lines.push(`  ${mermaidNode(from)} --> ${mermaidNode(to)}`);
+    nodesInEdges.add(from);
+    nodesInEdges.add(to);
   }
 
   // 依存辺に現れない孤立ノードを個別に追加
@@ -38,13 +62,10 @@ export function renderDot(tasks: TaskDefinition[]): string {
   const lines = ["digraph bake {"];
   const nodesInEdges = new Set<string>();
 
-  for (const task of tasks) {
-    const deps = task.options?.deps ?? [];
-    for (const dep of deps) {
-      lines.push(`  ${dotQuote(dep)} -> ${dotQuote(task.name)};`);
-      nodesInEdges.add(dep);
-      nodesInEdges.add(task.name);
-    }
+  for (const { from, to } of incomingEdges(tasks)) {
+    lines.push(`  ${dotQuote(from)} -> ${dotQuote(to)};`);
+    nodesInEdges.add(from);
+    nodesInEdges.add(to);
   }
 
   // 依存辺に現れない孤立ノードを個別に追加

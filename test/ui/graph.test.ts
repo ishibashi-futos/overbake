@@ -57,4 +57,56 @@ describe("graph レンダリング", () => {
     expect(output).toContain("ns_build");
     expect(output).toContain("ns_test");
   });
+
+  const tasksWithEach = [
+    { name: "typecheck", fn: () => {}, options: {} },
+    { name: "fmt", fn: () => {}, options: {} },
+    { name: "clean", fn: () => {}, options: {} },
+    { name: "build", fn: () => {}, options: { deps: ["clean"] } },
+    {
+      name: "sanity",
+      fn: () => {},
+      options: {
+        each: [
+          { kind: "task" as const, name: "typecheck" },
+          { kind: "task" as const, name: "fmt" },
+          { kind: "task" as const, name: "build" },
+          { kind: "command" as const, label: "bun test" },
+        ],
+      },
+    },
+  ];
+
+  test("renderMermaid: task.each の工程を step --> task の辺として出力する", () => {
+    const output = renderMermaid(tasksWithEach);
+    expect(output).toContain("typecheck --> sanity");
+    expect(output).toContain("fmt --> sanity");
+    expect(output).toContain("build --> sanity");
+    // コマンドタプルはラベルをノードにし、安全にエスケープする
+    expect(output).toContain('bun_test["bun test"] --> sanity');
+    // sanity は孤立ノード扱いされない
+    expect(output).not.toMatch(/^ {2}sanity$/m);
+  });
+
+  test("renderDot: task.each の工程をクォートされた辺として出力する", () => {
+    const output = renderDot(tasksWithEach);
+    expect(output).toContain('"typecheck" -> "sanity";');
+    expect(output).toContain('"fmt" -> "sanity";');
+    expect(output).toContain('"build" -> "sanity";');
+    expect(output).toContain('"bun test" -> "sanity";');
+  });
+
+  test("deps と each で同じ辺は一度だけ出力する", () => {
+    const tasks = [
+      { name: "a", fn: () => {}, options: {} },
+      {
+        name: "b",
+        fn: () => {},
+        options: { deps: ["a"], each: [{ kind: "task" as const, name: "a" }] },
+      },
+    ];
+    const output = renderMermaid(tasks);
+    const matches = output.match(/a --> b/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
 });

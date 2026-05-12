@@ -262,6 +262,11 @@ declare function task(name: string, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions): Task; // メタタスク
 
+declare namespace task {
+  function default(task: Task): void;          // 既定タスク指定
+  function each(name: string, ...items: (TaskEachOptions | RunEachItem)[]): Task; // 後述 5.3
+}
+
 declare const argv: string[]; // `--` 以降の引数
 ```
 
@@ -294,6 +299,15 @@ task("sanity", { desc: "まとめて検証" }, async ({ runEach }) => {
 - `{ keepGoing: true }` を先頭に渡すと全件実行し、失敗をまとめて報告する。
 - 全件成功時は `{ done }` のメッセージ(未指定なら既定文言)を出力する。
 - タスクハンドルは `before`/`after` フックは実行するが、`deps` はここでは展開しない。
+
+#### `task.each()` — 宣言的な runEach タスク
+
+`ctx.runEach` を本体で呼ぶ代わりに `task.each("sanity", { desc, done }, typecheck, fmt, build, test)` と書くと、
+工程列が `TaskOptions.each`(`RunEachStep[]` の静的記述)としてタスク定義に保存され、生成された `fn` が
+`ctx.runEach(...)` を実行する。実行時挙動は `ctx.runEach` と同じだが、**工程が `bake <task> --graph` の
+出力にも `工程 --> タスク` の辺として現れる**(コマンドタプルはコマンド文字列ラベルのノードになる)。本体で
+`ctx.runEach` を呼ぶ形は工程が実行時情報のためグラフには出ない。`deps` は `runEach` と同様ここでは展開せず、
+グラフ上の辺は表示用であって実行順を変えない(`resolveTasks` は `deps` のみを辿る)。
 
 ### 5.4 注入される global
 
