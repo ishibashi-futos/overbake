@@ -1,2 +1,5 @@
 [tools]
 bun = "v1.3.13"
+
+[shell_alias]
+bake = "dist/bake"
