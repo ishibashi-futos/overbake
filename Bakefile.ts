@@ -6,7 +6,7 @@ task("clean", { desc: "dist ディレクトリを削除" }, async ({ rm }) => {
 
 const buildOpts = ["build", "src/cli/main.ts", "--compile"];
 
-task(
+const build = task(
   "build",
   {
     desc: "CLI をビルド",
@@ -18,4 +18,30 @@ task(
   },
 );
 
-task.default("build");
+const typecheck = task("typecheck", { desc: "型チェック" }, async ({ cmd }) => {
+  await cmd("bunx", ["tsc", "--noEmit"]);
+});
+
+const fmt = task("fmt", { desc: "フォーマットチェック" }, async ({ cmd }) => {
+  await cmd("bunx", ["biome", "check", "."]);
+});
+
+const test = task("test", { desc: "テストを実行" }, async ({ cmd }) => {
+  await cmd("bun", ["test"]);
+});
+
+task(
+  "sanity",
+  { desc: "型チェック・フォーマット・ビルド・テストをまとめて実行" },
+  async ({ runEach }) => {
+    await runEach(
+      { done: "✨ All checks passed! You're good to go." },
+      typecheck,
+      fmt,
+      build,
+      test,
+    );
+  },
+);
+
+task.default(build);

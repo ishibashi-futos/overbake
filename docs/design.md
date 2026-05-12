@@ -257,15 +257,45 @@ interface HookContext {
   name: string;
 }
 
-// 3 つのオーバーロード
-declare function task(name: string, fn: TaskFn): void;
-declare function task(name: string, opts: TaskOptions, fn: TaskFn): void;
-declare function task(name: string, opts: TaskOptions): void; // メタタスク
+// 3 つのオーバーロード。戻り値はタスクハンドル (runEach に渡せる)
+declare function task(name: string, fn: TaskFn): Task;
+declare function task(name: string, opts: TaskOptions, fn: TaskFn): Task;
+declare function task(name: string, opts: TaskOptions): Task; // メタタスク
 
 declare const argv: string[]; // `--` 以降の引数
 ```
 
-### 5.3 注入される global
+### 5.3 `ctx.runEach()` — まとめて実行
+
+`scripts/sanity.sh` 相当の体験を 1 タスクで表現するためのヘルパー。タスクハンドルまたはコマンドタプル
+(`[command, args?]`) を混在で受け取り、順に実行する。
+
+```typescript
+const typecheck = task("typecheck", { desc: "型チェック" }, async ({ cmd }) => {
+  await cmd("bunx", ["tsc", "--noEmit"]);
+});
+const fmt = task("fmt", { desc: "フォーマットチェック" }, async ({ cmd }) => {
+  await cmd("bunx", ["biome", "check", "."]);
+});
+const test = task("test", { desc: "テストを実行" }, async ({ cmd }) => {
+  await cmd("bun", ["test"]);
+});
+
+task("sanity", { desc: "まとめて検証" }, async ({ runEach }) => {
+  await runEach(
+    { done: "✨ All checks passed!" },
+    typecheck, fmt, ["bun", ["build"]], test,
+  );
+});
+```
+
+- 各工程の出力 (`cmd` の stdout/stderr, `ctx.log`, `console.log/error`) は抑制してバッファに溜める。
+- 工程が失敗したら、その工程のバッファ内容を表示して例外を投げる。既定は **fail-fast**(最初の失敗で残りを実行しない)。
+- `{ keepGoing: true }` を先頭に渡すと全件実行し、失敗をまとめて報告する。
+- 全件成功時は `{ done }` のメッセージ(未指定なら既定文言)を出力する。
+- タスクハンドルは `before`/`after` フックは実行するが、`deps` はここでは展開しない。
+
+### 5.4 注入される global
 
 | 名前 | 型 | 用途 |
 |---|---|---|

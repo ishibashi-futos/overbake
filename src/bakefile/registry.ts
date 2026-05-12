@@ -12,7 +12,7 @@ export class TaskRegistry {
     name: string,
     optionsOrFn: TaskOptions | TaskFunction,
     fn?: TaskFunction,
-  ) {
+  ): TaskDefinition {
     if (this.tasks.has(name)) {
       throw new DuplicateTaskError(name);
     }
@@ -33,12 +33,14 @@ export class TaskRegistry {
       }
     }
 
-    this.tasks.set(name, {
+    const definition: TaskDefinition = {
       name,
       fn: actualFn,
       isMeta,
       options: actualOptions,
-    });
+    };
+    this.tasks.set(name, definition);
+    return definition;
   }
 
   get(name: string): TaskDefinition | undefined {

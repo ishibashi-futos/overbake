@@ -1,4 +1,4 @@
-import type { TaskFunction, TaskOptions } from "../types.ts";
+import type { Task, TaskFunction, TaskOptions } from "../types.ts";
 import type { TaskRegistry } from "./registry.ts";
 
 declare global {
@@ -6,8 +6,8 @@ declare global {
     name: string,
     optionsOrFn: TaskOptions | TaskFunction,
     fn?: TaskFunction,
-  ) => void) & {
-    default: (name: string) => void;
+  ) => Task) & {
+    default: (task: Task) => void;
   };
 }
 
@@ -22,12 +22,10 @@ export async function loadBakefile(
       name: string,
       optionsOrFn: TaskOptions | TaskFunction,
       fn?: TaskFunction,
-    ) => {
-      registry.register(name, optionsOrFn, fn);
-    }) as typeof globalThis.task;
+    ) => registry.register(name, optionsOrFn, fn)) as typeof globalThis.task;
 
-    taskFn.default = (name: string) => {
-      registry.setDefault(name);
+    taskFn.default = (task: Task) => {
+      registry.setDefault(task.name);
     };
 
     globalThis.task = taskFn;

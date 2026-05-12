@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "allow": ["Bash(bunx tsc *)", "Bash(bun test *)"],
     "deny": [
       "Write(issues/**)",
       "Edit(issues/**)",

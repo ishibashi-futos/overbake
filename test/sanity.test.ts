@@ -434,8 +434,8 @@ describe("loadBakefile", () => {
     const bakefilePath = resolve(tempDir, "test-bakefile.ts");
     writeFileSync(
       bakefilePath,
-      `task("build", () => {});
-task.default("build");`,
+      `const build = task("build", () => {});
+task.default(build);`,
     );
 
     const registry = new TaskRegistry();
@@ -448,10 +448,10 @@ task.default("build");`,
     const bakefilePath = resolve(tempDir, "test-bakefile.ts");
     writeFileSync(
       bakefilePath,
-      `task("build", () => {});
-task("clean", () => {});
-task.default("build");
-task.default("clean");`,
+      `const build = task("build", () => {});
+const clean = task("clean", () => {});
+task.default(build);
+task.default(clean);`,
     );
 
     const registry = new TaskRegistry();
@@ -568,7 +568,7 @@ describe("init", () => {
 
       writeFileSync(
         tsPath,
-        `/// <reference path="./Bakefile.d.ts" />\n\ntask.default("x");\n`,
+        `/// <reference path="./Bakefile.d.ts" />\n\nconst x = task("x", () => {});\ntask.default(x);\n`,
       );
 
       execSync(`bunx tsc --noEmit --strict "${tsPath}"`, {
@@ -845,7 +845,7 @@ task("check-paths", (ctx) => {
 
   test("default task execution with task.default()", async () => {
     const bakefileContent = `
-task("build", () => {
+const build = task("build", () => {
   console.log("build executed");
 });
 
@@ -853,7 +853,7 @@ task("clean", () => {
   console.log("clean executed");
 });
 
-task.default("build");
+task.default(build);
 `;
 
     writeFileSync("Bakefile.ts", bakefileContent);
@@ -882,11 +882,11 @@ task("clean", { desc: "Clean build" }, () => {});
 
   test("default task respects --dry-run flag", async () => {
     const bakefileContent = `
-task("mytask", () => {
+const mytask = task("mytask", () => {
   globalThis.__defaultDryRunCalled = true;
 });
 
-task.default("mytask");
+task.default(mytask);
 `;
 
     writeFileSync("Bakefile.ts", bakefileContent);
@@ -899,11 +899,11 @@ task.default("mytask");
 
   test("default task respects --explain flag", async () => {
     const bakefileContent = `
-task("explained", { desc: "Task for explain" }, () => {
+const explained = task("explained", { desc: "Task for explain" }, () => {
   globalThis.__defaultExplainCalled = true;
 });
 
-task.default("explained");
+task.default(explained);
 `;
 
     writeFileSync("Bakefile.ts", bakefileContent);
@@ -2252,11 +2252,11 @@ task("format", {
 
   test("duplicate default task definition is caught at Bakefile load time", async () => {
     const bakefileContent = `
-task("build", () => {});
-task("clean", () => {});
+const build = task("build", () => {});
+const clean = task("clean", () => {});
 
-task.default("build");
-task.default("clean");
+task.default(build);
+task.default(clean);
 `;
 
     writeFileSync("Bakefile.ts", bakefileContent);
@@ -3913,5 +3913,117 @@ describe("issue #30: bake doctor - main 統合テスト", () => {
     expect(exitCode).toBe(2);
     const output = logs.join("\n");
     expect(output).toContain("ERROR");
+  });
+});
+
+describe("TaskRegistry.register return value", () => {
+  test("returns the created TaskDefinition", () => {
+    const registry = new TaskRegistry();
+    const fn = () => {};
+    const def = registry.register("t", { desc: "d" }, fn);
+    expect(def.name).toBe("t");
+    expect(def.fn).toBe(fn);
+    expect(def.options).toEqual({ desc: "d" });
+    expect(registry.get("t")).toBe(def);
+  });
+});
+
+describe("createTaskContext onOutput", () => {
+  test("cmd output and log are routed to onOutput", async () => {
+    const chunks: string[] = [];
+    const ctx = createTaskContext({
+      name: "t",
+      root: process.cwd(),
+      onOutput: (text) => chunks.push(text),
+    });
+    await ctx.cmd("echo", ["hello-onoutput"]);
+    ctx.log("logged-line");
+    const all = chunks.join("");
+    expect(all).toContain("hello-onoutput");
+    expect(all).toContain("logged-line");
+  });
+
+  test("cmd rejects on non-zero exit even with onOutput", async () => {
+    const ctx = createTaskContext({
+      name: "t",
+      root: process.cwd(),
+      onOutput: () => {},
+    });
+    await expect(ctx.cmd("sh", ["-c", "exit 3"])).rejects.toThrow();
+  });
+});
+
+describe("ctx.runEach", () => {
+  let writes: string[];
+  let origWrite: typeof process.stdout.write;
+
+  beforeEach(() => {
+    writes = [];
+    origWrite = process.stdout.write.bind(process.stdout);
+    (process.stdout.write as unknown) = (chunk: string | Uint8Array) => {
+      writes.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+  });
+
+  afterEach(() => {
+    process.stdout.write = origWrite;
+  });
+
+  function makeCtx() {
+    return createTaskContext({ name: "parent", root: process.cwd() });
+  }
+
+  test("runs all items and prints the done message on success", async () => {
+    await makeCtx().runEach({ done: "ALL GOOD" }, ["echo", ["one"]], {
+      name: "two",
+      fn: async (c) => {
+        await c.cmd("echo", ["two-ran"]);
+      },
+    });
+    const out = writes.join("");
+    expect(out).toContain("Running parent...");
+    expect(out).toContain("- echo one... ✅");
+    expect(out).toContain("- two... ✅");
+    expect(out).toContain("ALL GOOD");
+  });
+
+  test("fail-fast: stops at the first failure and surfaces its output", async () => {
+    let secondRan = false;
+    await expect(
+      makeCtx().runEach(["sh", ["-c", "echo BOOM-OUTPUT >&2; exit 1"]], {
+        name: "second",
+        fn: () => {
+          secondRan = true;
+        },
+      }),
+    ).rejects.toThrow("runEach failed");
+    expect(secondRan).toBe(false);
+    const out = writes.join("");
+    expect(out).toContain("❌");
+    expect(out).toContain("BOOM-OUTPUT");
+  });
+
+  test("keepGoing: runs everything and reports all failures", async () => {
+    let thirdRan = false;
+    await expect(
+      makeCtx().runEach(
+        { keepGoing: true },
+        ["sh", ["-c", "exit 1"]],
+        ["sh", ["-c", "exit 1"]],
+        {
+          name: "third",
+          fn: () => {
+            thirdRan = true;
+          },
+        },
+      ),
+    ).rejects.toThrow("runEach failed");
+    expect(thirdRan).toBe(true);
+  });
+
+  test("uses a default done message when none is provided", async () => {
+    await makeCtx().runEach(["echo", ["x"]]);
+    expect(writes.join("")).toContain("✨ done (1 task(s))");
   });
 });

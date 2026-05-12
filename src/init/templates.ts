@@ -17,6 +17,24 @@ export const BAKEFILE_DTS_TEMPLATE = `// Bakefile.d.ts — Overbake が globalTh
 // 実行時には参照されず、Bakefile.ts の型補完を提供するためだけに存在する
 // Bakefile.ts の triple-slash reference によって TS Language Server に読み込まれる
 
+/** task() が返すハンドル。runEach に渡せる。 */
+interface Task {
+  readonly name: string;
+}
+
+/** runEach に渡せるコマンド: cmd と同じ [command, args?] 形式 */
+type RunEachCommand = readonly [string, (readonly string[])?];
+
+/** runEach に渡せる要素: タスクオブジェクト または コマンド */
+type RunEachItem = Task | RunEachCommand;
+
+interface RunEachOptions {
+  /** 全件成功時に出力するメッセージ（未指定なら既定文言） */
+  done?: string;
+  /** true なら最初の失敗で中断せず、全件実行してから失敗をまとめて報告する */
+  keepGoing?: boolean;
+}
+
 interface TaskContext {
   name: string;
   root: string;
@@ -33,6 +51,11 @@ interface TaskContext {
   exists(path: string): boolean;
   resolve(...segments: string[]): string;
   log(...args: unknown[]): void;
+  /**
+   * 複数のタスク・コマンドを順に実行する。各工程の出力は抑制し、
+   * 失敗した工程の出力だけを表示して例外を投げる。全件成功時は done メッセージを出力する。
+   */
+  runEach(...items: (RunEachOptions | RunEachItem)[]): Promise<void>;
 }
 
 type TaskFn = (ctx: TaskContext) => void | Promise<void>;
@@ -66,12 +89,12 @@ interface TaskOptions {
   ) => void | Promise<void>;
 }
 
-declare function task(name: string, fn: TaskFn): void;
-declare function task(name: string, opts: TaskOptions, fn: TaskFn): void;
-declare function task(name: string, opts: TaskOptions): void;
+declare function task(name: string, fn: TaskFn): Task;
+declare function task(name: string, opts: TaskOptions, fn: TaskFn): Task;
+declare function task(name: string, opts: TaskOptions): Task;
 
 declare namespace task {
-  function defaultTask(name: string): void;
+  function defaultTask(task: Task): void;
 
   export { defaultTask as default };
 }
