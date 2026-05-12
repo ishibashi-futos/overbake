@@ -1,5 +1,6 @@
 export interface InitCommand {
   type: "init";
+  typesOnly: boolean;
 }
 
 export interface ListCommand {
@@ -74,7 +75,7 @@ export function parseArgs(args: string[]): Command {
   const [command] = args;
 
   if (command === "init") {
-    return { type: "init" };
+    return { type: "init", typesOnly: args.includes("--type") };
   }
 
   if (command === "doctor") {

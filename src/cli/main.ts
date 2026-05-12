@@ -88,7 +88,7 @@ export async function main(args: string[]): Promise<void> {
     }
 
     if (command.type === "init") {
-      await init();
+      await init(command.typesOnly);
       return;
     }
 

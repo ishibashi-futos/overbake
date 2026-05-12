@@ -60,6 +60,7 @@ export function renderGlobalHelp(): string {
 
 Commands:
   init                   Initialize a new Bakefile
+  init --type            Update only Bakefile.d.ts
   -l, list               List available tasks
   doctor                 Validate Bakefile.ts without running tasks
   --help                 Show this help message

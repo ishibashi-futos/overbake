@@ -22,6 +22,17 @@ interface TaskContext {
 
 type TaskFn = (ctx: TaskContext) => void | Promise<void>;
 
+type TaskPlatform =
+  | "aix"
+  | "darwin"
+  | "freebsd"
+  | "linux"
+  | "openbsd"
+  | "sunos"
+  | "win32"
+  | "cygwin"
+  | "netbsd";
+
 interface HookContext {
   name: string;
 }
@@ -32,6 +43,8 @@ interface TaskOptions {
   inputs?: string[];
   outputs?: string[];
   env?: string[];
+  confirm?: string | string[];
+  platforms?: TaskPlatform[];
   before?: (ctx: HookContext) => void | Promise<void>;
   after?: (
     ctx: HookContext & { ok: boolean; durationMs: number },
@@ -41,5 +54,11 @@ interface TaskOptions {
 declare function task(name: string, fn: TaskFn): void;
 declare function task(name: string, opts: TaskOptions, fn: TaskFn): void;
 declare function task(name: string, opts: TaskOptions): void;
+
+declare namespace task {
+  function defaultTask(name: string): void;
+
+  export { defaultTask as default };
+}
 
 declare const argv: readonly string[];

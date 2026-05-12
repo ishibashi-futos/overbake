@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { execSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -51,6 +52,17 @@ describe("parseArgs", () => {
   test('parses "init" command', () => {
     const result = parseArgs(["init"]);
     expect(result.type).toBe("init");
+    if (result.type === "init") {
+      expect(result.typesOnly).toBe(false);
+    }
+  });
+
+  test('parses "init --type" command', () => {
+    const result = parseArgs(["init", "--type"]);
+    expect(result.type).toBe("init");
+    if (result.type === "init") {
+      expect(result.typesOnly).toBe(true);
+    }
   });
 
   test("parses run command with task name", () => {
@@ -523,8 +535,49 @@ describe("init", () => {
     await init();
 
     const content = readFileSync("Bakefile.d.ts", "utf-8");
-    expect(content).toContain("function default");
+    expect(content).toContain("function defaultTask");
+    expect(content).toContain("export { defaultTask as default }");
     expect(content).toContain("declare namespace task");
+  });
+
+  test("init(true) updates only Bakefile.d.ts without touching Bakefile.ts", async () => {
+    writeFileSync("Bakefile.ts", "// existing bakefile");
+    const originalBakefileContent = readFileSync("Bakefile.ts", "utf-8");
+
+    await init(true);
+
+    expect(existsSync("Bakefile.d.ts")).toBe(true);
+    const updatedBakefileContent = readFileSync("Bakefile.ts", "utf-8");
+    expect(updatedBakefileContent).toBe(originalBakefileContent);
+  });
+
+  test("generated Bakefile.d.ts is valid TypeScript with task.default usage", async () => {
+    const tempDtsDir = resolve(
+      "/tmp",
+      `overbake-dts-test-${Date.now()}-${Math.random()}`,
+    );
+    mkdirSync(tempDtsDir, { recursive: true });
+
+    try {
+      const dtsPath = resolve(tempDtsDir, "Bakefile.d.ts");
+      const tsPath = resolve(tempDtsDir, "test.ts");
+
+      await init();
+      const generatedDts = readFileSync("Bakefile.d.ts", "utf-8");
+      writeFileSync(dtsPath, generatedDts);
+
+      writeFileSync(
+        tsPath,
+        `/// <reference path="./Bakefile.d.ts" />\n\ntask.default("x");\n`,
+      );
+
+      execSync(`bunx tsc --noEmit --strict "${tsPath}"`, {
+        cwd: tempDtsDir,
+        stdio: "pipe",
+      });
+    } finally {
+      rmSync(tempDtsDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -671,6 +724,16 @@ task("c", () => {
 
     expect(existsSync("Bakefile.ts")).toBe(true);
     expect(existsSync("Bakefile.d.ts")).toBe(true);
+  });
+
+  test("init --type command updates only Bakefile.d.ts", async () => {
+    const originalBakefileContent = "// original bakefile";
+    writeFileSync("Bakefile.ts", originalBakefileContent);
+
+    await main(["init", "--type"]);
+
+    expect(existsSync("Bakefile.d.ts")).toBe(true);
+    expect(readFileSync("Bakefile.ts", "utf-8")).toBe(originalBakefileContent);
   });
 
   test("task receives TaskContext with required properties", async () => {
@@ -1986,6 +2049,7 @@ describe("UI help rendering", () => {
     const output = renderGlobalHelp();
     expect(output).toContain("Usage:");
     expect(output).toContain("init");
+    expect(output).toContain("init --type");
     expect(output).toContain("list");
     expect(output).toContain("--help");
     expect(output).toContain("--dry-run");
@@ -2115,6 +2179,7 @@ task("deploy", { desc: "Deploy app" }, () => {});
     const output = logs.join("\n");
     expect(output).toContain("Usage:");
     expect(output).toContain("init");
+    expect(output).toContain("init --type");
     expect(output).toContain("list");
   });
 

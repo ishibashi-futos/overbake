@@ -21,14 +21,32 @@ interface TaskContext {
   name: string;
   root: string;
   cwd: string;
-  cmd(command: string, args?: readonly string[], options?: { cwd?: string; env?: Record<string, string | undefined> }): Promise<void>;
-  rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  cmd(
+    command: string,
+    args?: readonly string[],
+    options?: { cwd?: string; env?: Record<string, string | undefined> },
+  ): Promise<void>;
+  rm(
+    path: string,
+    options?: { recursive?: boolean; force?: boolean },
+  ): Promise<void>;
   exists(path: string): boolean;
   resolve(...segments: string[]): string;
   log(...args: unknown[]): void;
 }
 
 type TaskFn = (ctx: TaskContext) => void | Promise<void>;
+
+type TaskPlatform =
+  | "aix"
+  | "darwin"
+  | "freebsd"
+  | "linux"
+  | "openbsd"
+  | "sunos"
+  | "win32"
+  | "cygwin"
+  | "netbsd";
 
 interface HookContext {
   name: string;
@@ -41,7 +59,7 @@ interface TaskOptions {
   outputs?: string[];
   env?: string[];
   confirm?: string | string[];
-  platforms?: NodeJS.Platform[];
+  platforms?: TaskPlatform[];
   before?: (ctx: HookContext) => void | Promise<void>;
   after?: (
     ctx: HookContext & { ok: boolean; durationMs: number },
@@ -53,7 +71,9 @@ declare function task(name: string, opts: TaskOptions, fn: TaskFn): void;
 declare function task(name: string, opts: TaskOptions): void;
 
 declare namespace task {
-  function default(name: string): void;
+  function defaultTask(name: string): void;
+
+  export { defaultTask as default };
 }
 
 declare const argv: readonly string[];
