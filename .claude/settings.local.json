@@ -1,6 +1,10 @@
 {
   "permissions": {
-    "allow": ["Bash(bunx tsc *)", "Bash(bun test *)"],
+    "allow": [
+      "Bash(bunx tsc *)",
+      "Bash(bun test *)",
+      "Bash(./scripts/sanity.sh)"
+    ],
     "deny": [
       "Write(issues/**)",
       "Edit(issues/**)",
