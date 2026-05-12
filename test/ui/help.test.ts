@@ -87,6 +87,10 @@ describe("renderGlobalHelp - completions / doctor の案内", () => {
   test("doctor を含む", () => {
     expect(renderGlobalHelp()).toContain("doctor");
   });
+
+  test("glaze を含む", () => {
+    expect(renderGlobalHelp()).toContain("glaze");
+  });
 });
 
 describe("issue #21: renderTaskList グルーピング表示", () => {

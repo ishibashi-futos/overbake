@@ -23,6 +23,7 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
     expect(script).toContain("list");
     expect(script).toContain("completions");
     expect(script).toContain("doctor");
+    expect(script).toContain("glaze");
   });
 
   test("generateZshCompletion はフラグを含む", () => {
@@ -48,6 +49,7 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
     expect(script).toContain("list");
     expect(script).toContain("completions");
     expect(script).toContain("doctor");
+    expect(script).toContain("glaze");
   });
 
   test("generateFishCompletion は complete -c bake を含む", () => {
@@ -66,5 +68,6 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
     expect(script).toContain("list");
     expect(script).toContain("completions");
     expect(script).toContain("doctor");
+    expect(script).toContain("glaze");
   });
 });

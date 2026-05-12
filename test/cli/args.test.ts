@@ -367,3 +367,38 @@ describe("issue #30: bake doctor - parseArgs", () => {
     expect(result.type).toBe("doctor");
   });
 });
+
+describe("bake glaze - parseArgs", () => {
+  test('"glaze" を解析すると type=glaze / filePath なし / check=false', () => {
+    const result = parseArgs(["glaze"]);
+    expect(result.type).toBe("glaze");
+    if (result.type === "glaze") {
+      expect(result.filePath).toBeUndefined();
+      expect(result.check).toBe(false);
+    }
+  });
+
+  test('"glaze <path>" は filePath を取り込む', () => {
+    const result = parseArgs(["glaze", "Bakefile.ts"]);
+    expect(result.type).toBe("glaze");
+    if (result.type === "glaze") {
+      expect(result.filePath).toBe("Bakefile.ts");
+    }
+  });
+
+  test('"glaze --check" は check=true / filePath なし', () => {
+    const result = parseArgs(["glaze", "--check"]);
+    if (result.type === "glaze") {
+      expect(result.filePath).toBeUndefined();
+      expect(result.check).toBe(true);
+    }
+  });
+
+  test('"glaze <path> --check" は両方を取り込む', () => {
+    const result = parseArgs(["glaze", "x.ts", "--check"]);
+    if (result.type === "glaze") {
+      expect(result.filePath).toBe("x.ts");
+      expect(result.check).toBe(true);
+    }
+  });
+});

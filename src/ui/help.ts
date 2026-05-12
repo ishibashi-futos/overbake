@@ -63,6 +63,8 @@ Commands:
   init --type            Update only Bakefile.d.ts
   -l, list               List available tasks
   doctor                 Validate Bakefile.ts without running tasks
+  glaze [path]           Format a Bakefile.ts (defaults to ./Bakefile.ts)
+  glaze --check [path]   Check formatting without writing
   --help                 Show this help message
   --help <task>          Show help for a specific task
   completions <shell>    Output shell completion script (zsh/bash/fish)

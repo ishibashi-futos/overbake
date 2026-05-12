@@ -5,6 +5,10 @@ set -o pipefail
 
 echo "Running sanity checks..."
 
+# 失敗があっても残りの工程を最後まで走らせ、失敗した工程の出力をその場で表示する。
+# （fail-fast にしないことで、tsc・biome・テストのエラーを 1 回の実行でまとめて確認できる）
+failures=0
+
 run_check() {
   local label=$1
   shift
@@ -22,18 +26,22 @@ run_check() {
   else
     echo "❌ FAILED"
     echo "--------------------------------------------------"
-    # 失敗した時だけ、溜めていた出力を表示
+    # 失敗した工程の出力（エラー内容）をそのまま表示する
     echo "${output}"
     echo "--------------------------------------------------"
-    # 失敗した時点でスクリプト全体を異常終了させる
-    exit 1
+    failures=$((failures + 1))
   fi
 }
 
-# 各工程を実行
+# 各工程を実行（途中で止めず、全部走らせる）
 run_check "Type check" bunx tsc --noEmit
 run_check "Formatting" bunx biome check .
 run_check "Build" bun run build
 run_check "Unit tests" bun test
+
+if [ "$failures" -gt 0 ]; then
+  echo "\n💥 $failures check(s) failed."
+  exit 1
+fi
 
 echo "\n✨ All checks passed! You're good to go."

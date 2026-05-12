@@ -51,6 +51,12 @@ export interface DoctorCommand {
   type: "doctor";
 }
 
+export interface GlazeCommand {
+  type: "glaze";
+  filePath?: string;
+  check: boolean;
+}
+
 export type Command =
   | InitCommand
   | ListCommand
@@ -59,7 +65,8 @@ export type Command =
   | RunCommand
   | CompletionsCommand
   | CompleteCommand
-  | DoctorCommand;
+  | DoctorCommand
+  | GlazeCommand;
 
 // --graph / --graph=mermaid / --graph=dot などを抽出する
 function extractGraph(args: string[]): string | undefined {
@@ -80,6 +87,11 @@ export function parseArgs(args: string[]): Command {
 
   if (command === "doctor") {
     return { type: "doctor" };
+  }
+
+  if (command === "glaze") {
+    const filePath = args.slice(1).find((arg) => !arg.startsWith("-"));
+    return { type: "glaze", filePath, check: args.includes("--check") };
   }
 
   if (command === "-l" || command === "list") {

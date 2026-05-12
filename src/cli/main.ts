@@ -33,6 +33,7 @@ import {
 } from "./completions.ts";
 import { runDoctor } from "./doctor.ts";
 import { CliError } from "./error.ts";
+import { runGlaze } from "./glaze.ts";
 
 function validateGraphFormat(format: string): void {
   if (format !== "mermaid" && format !== "dot") {
@@ -81,6 +82,14 @@ export async function main(args: string[]): Promise<void> {
 
     if (command.type === "doctor") {
       const exitCode = await runDoctor();
+      if (exitCode !== 0) {
+        process.exit(exitCode);
+      }
+      return;
+    }
+
+    if (command.type === "glaze") {
+      const exitCode = await runGlaze(command.filePath, command.check);
       if (exitCode !== 0) {
         process.exit(exitCode);
       }
