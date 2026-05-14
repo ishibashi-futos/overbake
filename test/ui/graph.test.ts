@@ -96,6 +96,59 @@ describe("graph レンダリング", () => {
     expect(output).toContain('"bun test" -> "sanity";');
   });
 
+  const tasksWithCompose = [
+    { name: "ui", fn: () => {}, options: {} },
+    { name: "api", fn: () => {}, options: {} },
+    {
+      name: "dev",
+      fn: () => {},
+      options: {
+        compose: [
+          { kind: "task" as const, name: "ui" },
+          { kind: "task" as const, name: "api" },
+          { kind: "command" as const, label: "bun run scripts/worker.ts" },
+        ],
+      },
+    },
+  ];
+
+  test("renderMermaid: task.compose のサービスを service --> task の辺として出力する", () => {
+    const output = renderMermaid(tasksWithCompose);
+    expect(output).toContain("ui --> dev");
+    expect(output).toContain("api --> dev");
+    // コマンドタプルはラベルをノードにし、安全にエスケープする
+    expect(output).toContain("--> dev");
+    expect(output).toMatch(
+      /bun_run_scripts_worker_ts\["bun run scripts\/worker\.ts"\] --> dev/,
+    );
+    // dev は孤立ノード扱いされない
+    expect(output).not.toMatch(/^ {2}dev$/m);
+  });
+
+  test("renderDot: task.compose のサービスをクォートされた辺として出力する", () => {
+    const output = renderDot(tasksWithCompose);
+    expect(output).toContain('"ui" -> "dev";');
+    expect(output).toContain('"api" -> "dev";');
+    expect(output).toContain('"bun run scripts/worker.ts" -> "dev";');
+  });
+
+  test("deps と compose で同じ辺は一度だけ出力する", () => {
+    const tasks = [
+      { name: "a", fn: () => {}, options: {} },
+      {
+        name: "b",
+        fn: () => {},
+        options: {
+          deps: ["a"],
+          compose: [{ kind: "task" as const, name: "a" }],
+        },
+      },
+    ];
+    const output = renderMermaid(tasks);
+    const matches = output.match(/a --> b/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
   test("deps と each で同じ辺は一度だけ出力する", () => {
     const tasks = [
       { name: "a", fn: () => {}, options: {} },

@@ -42,4 +42,19 @@ task.each(
   test,
 );
 
+const server1 = task("server1", async ({ cmd }) => {
+  await cmd("bun", ["run", "--hot", "scripts/dev-server.ts"], {
+    env: { PORT: "3000" },
+  });
+});
+
+const server2 = task("server2", async ({ cmd }) => {
+  await cmd("bun", ["run", "--hot", "./dev-server.ts"], {
+    env: { PORT: "3001" },
+    cwd: "scripts/",
+  });
+});
+
+task.compose("dev", { desc: "run servers" }, server1, server2);
+
 task.default(build);

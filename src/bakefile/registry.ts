@@ -4,9 +4,12 @@ import {
 } from "../shared/errors.ts";
 import { commandLabel, isCommand, isTask } from "../shared/run-each.ts";
 import type {
+  ComposeItem,
+  ComposeStep,
   RunEachItem,
   RunEachOptions,
   RunEachStep,
+  TaskComposeOptions,
   TaskDefinition,
   TaskEachOptions,
   TaskFunction,
@@ -89,6 +92,36 @@ export class TaskRegistry {
     };
 
     return this.register(name, { ...taskOptions, each }, fn);
+  }
+
+  /**
+   * task.compose(): 複数の長時間サービスを並列起動するタスクを宣言的に登録する。
+   * サービス列は options.compose に静的記述として保存され（グラフ描画用）、
+   * 生成された fn が ctx.runCompose で並列起動・fail-fast・SIGTERM 伝播を行う。
+   */
+  registerCompose(
+    name: string,
+    ...args: (TaskComposeOptions | ComposeItem)[]
+  ): TaskDefinition {
+    let taskOptions: TaskComposeOptions = {};
+    let items = args as ComposeItem[];
+    const first = args[0];
+    if (first !== undefined && !isCommand(first) && !isTask(first)) {
+      taskOptions = first as TaskComposeOptions;
+      items = args.slice(1) as ComposeItem[];
+    }
+
+    const compose: ComposeStep[] = items.map((item) =>
+      isCommand(item)
+        ? { kind: "command", label: commandLabel(item) }
+        : { kind: "task", name: item.name, desc: item.options?.desc },
+    );
+
+    const fn: TaskFunction = async (ctx) => {
+      await ctx.runCompose(items);
+    };
+
+    return this.register(name, { ...taskOptions, compose }, fn);
   }
 
   get(name: string): TaskDefinition | undefined {

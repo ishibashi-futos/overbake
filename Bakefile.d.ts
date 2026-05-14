@@ -2,16 +2,19 @@
 // 実行時には参照されず、Bakefile.ts の型補完を提供するためだけに存在する
 // Bakefile.ts の triple-slash reference によって TS Language Server に読み込まれる
 
-/** task() が返すハンドル。runEach に渡せる。 */
+/** task() が返すハンドル。runEach / task.compose に渡せる。 */
 interface Task {
   readonly name: string;
 }
 
-/** runEach に渡せるコマンド: cmd と同じ [command, args?] 形式 */
+/** runEach / task.compose に渡せるコマンド: cmd と同じ [command, args?] 形式 */
 type RunEachCommand = readonly [string, (readonly string[])?];
 
 /** runEach に渡せる要素: タスクオブジェクト または コマンド */
 type RunEachItem = Task | RunEachCommand;
+
+/** task.compose に渡せる要素: タスクオブジェクト または コマンド */
+type ComposeItem = Task | RunEachCommand;
 
 interface RunEachOptions {
   /** 全件成功時に出力するメッセージ（未指定なら既定文言） */
@@ -77,6 +80,9 @@ interface TaskOptions {
 /** task.each() の先頭に渡せるオプション（省略可） */
 type TaskEachOptions = TaskOptions & RunEachOptions;
 
+/** task.compose() の先頭に渡せるオプション（省略可） */
+type TaskComposeOptions = TaskOptions;
+
 declare function task(name: string, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions): Task;
@@ -90,6 +96,17 @@ declare namespace task {
   export function each(
     name: string,
     ...items: (TaskEachOptions | RunEachItem)[]
+  ): Task;
+
+  /**
+   * 複数の長時間サービスを並列起動するタスクを宣言的に登録する。
+   * 1 つでも exit すると他に SIGTERM を送り、grace 後 SIGKILL する fail-fast。
+   * 出力は [name] prefix 付きで stdout に行単位でストリーミングされる。
+   * サービス列は `bake <task> --graph` の出力にも辺として現れる。
+   */
+  export function compose(
+    name: string,
+    ...items: (TaskComposeOptions | ComposeItem)[]
   ): Task;
 
   function defaultTask(task: Task): void;

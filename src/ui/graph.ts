@@ -1,4 +1,4 @@
-import type { RunEachStep, TaskDefinition } from "../types.ts";
+import type { ComposeStep, RunEachStep, TaskDefinition } from "../types.ts";
 
 // `:` などの特殊文字を含む名前を mermaid のノード ID として安全にする
 function mermaidNode(name: string): string {
@@ -11,8 +11,9 @@ function dotQuote(name: string): string {
   return `"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-// task.each の工程記述からエッジ始点となるノード名を取り出す
-function stepNode(step: RunEachStep): string {
+// task.each / task.compose の工程記述からエッジ始点となるノード名を取り出す。
+// 構造が同形なのでどちらの step 型にも適用できる。
+function stepNode(step: RunEachStep | ComposeStep): string {
   return step.kind === "task" ? step.name : step.label;
 }
 
@@ -21,7 +22,7 @@ interface Edge {
   to: string;
 }
 
-// 各タスクの「自分に向かう辺」（deps と task.each の工程）を重複なく列挙する
+// 各タスクの「自分に向かう辺」（deps、task.each、task.compose の工程）を重複なく列挙する
 function incomingEdges(tasks: TaskDefinition[]): Edge[] {
   const edges: Edge[] = [];
   const seen = new Set<string>();
@@ -34,6 +35,8 @@ function incomingEdges(tasks: TaskDefinition[]): Edge[] {
   for (const task of tasks) {
     for (const dep of task.options?.deps ?? []) add(dep, task.name);
     for (const step of task.options?.each ?? []) add(stepNode(step), task.name);
+    for (const step of task.options?.compose ?? [])
+      add(stepNode(step), task.name);
   }
   return edges;
 }

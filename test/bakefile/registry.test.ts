@@ -23,6 +23,23 @@ function stubContext(): {
   return { ctx, calls };
 }
 
+// runCompose 呼び出しだけを記録する最小の TaskContext スタブ
+function stubComposeContext(): {
+  ctx: TaskContext;
+  calls: unknown[][];
+} {
+  const calls: unknown[][] = [];
+  const ctx = {
+    name: "stub",
+    root: ".",
+    cwd: ".",
+    async runCompose(items: unknown[]) {
+      calls.push(items);
+    },
+  } as unknown as TaskContext;
+  return { ctx, calls };
+}
+
 describe("TaskRegistry", () => {
   test("registers a task with function only", () => {
     const registry = new TaskRegistry();
@@ -171,6 +188,85 @@ describe("TaskRegistry.registerEach", () => {
     const registry = new TaskRegistry();
     registry.register("dup", () => {});
     expect(() => registry.registerEach("dup")).toThrow(DuplicateTaskError);
+  });
+});
+
+describe("TaskRegistry.registerCompose", () => {
+  test("サービス列を options.compose に静的記述として保存し、通常タスクとして登録される", () => {
+    const registry = new TaskRegistry();
+    const ui = registry.register("ui", { desc: "UI dev" }, () => {});
+    const api = registry.register("api", () => {});
+
+    const def = registry.registerCompose(
+      "dev",
+      { desc: "全サービス並列起動" },
+      ui,
+      api,
+      ["bun", ["run", "scripts/worker.ts"]],
+    );
+
+    expect(def.name).toBe("dev");
+    expect(def.isMeta).toBe(false);
+    expect(typeof def.fn).toBe("function");
+    expect(def.options).toEqual({
+      desc: "全サービス並列起動",
+      compose: [
+        { kind: "task", name: "ui", desc: "UI dev" },
+        { kind: "task", name: "api", desc: undefined },
+        { kind: "command", label: "bun run scripts/worker.ts" },
+      ],
+    });
+    expect(registry.get("dev")).toBe(def);
+  });
+
+  test("生成された fn は ctx.runCompose を items の配列で呼ぶ", async () => {
+    const registry = new TaskRegistry();
+    const a = registry.register("a", () => {});
+    const b = registry.register("b", () => {});
+
+    const def = registry.registerCompose("dev", a, b, ["echo"]);
+    const { ctx, calls } = stubComposeContext();
+    await def.fn(ctx);
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]).toEqual([a, b, ["echo"]]);
+  });
+
+  test("オプションを省略しても登録できる", () => {
+    const registry = new TaskRegistry();
+    const a = registry.register("a", () => {});
+
+    const def = registry.registerCompose("dev", a);
+    expect(def.options?.compose).toEqual([
+      { kind: "task", name: "a", desc: undefined },
+    ]);
+  });
+
+  test("サービス 0 個でも登録でき compose は空配列になる", () => {
+    const registry = new TaskRegistry();
+    const def = registry.registerCompose("empty");
+    expect(def.options?.compose).toEqual([]);
+    expect(typeof def.fn).toBe("function");
+  });
+
+  test("重複名は DuplicateTaskError", () => {
+    const registry = new TaskRegistry();
+    registry.register("dup", () => {});
+    expect(() => registry.registerCompose("dup")).toThrow(DuplicateTaskError);
+  });
+
+  test("deps を TaskComposeOptions 経由で渡せる", () => {
+    const registry = new TaskRegistry();
+    const build = registry.register("build", () => {});
+    const ui = registry.register("ui", () => {});
+
+    const def = registry.registerCompose("dev", { deps: ["build"] }, ui);
+    expect(def.options?.deps).toEqual(["build"]);
+    expect(def.options?.compose).toEqual([
+      { kind: "task", name: "ui", desc: undefined },
+    ]);
+    // build/ui を参照していることを deps から確認
+    expect(registry.get("build")).toBe(build);
   });
 });
 

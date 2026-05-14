@@ -309,7 +309,57 @@ task("sanity", { desc: "まとめて検証" }, async ({ runEach }) => {
 `ctx.runEach` を呼ぶ形は工程が実行時情報のためグラフには出ない。`deps` は `runEach` と同様ここでは展開せず、
 グラフ上の辺は表示用であって実行順を変えない(`resolveTasks` は `deps` のみを辿る)。
 
-### 5.4 注入される global
+### 5.4 `task.compose()` — 複数フォルダの並列サービス起動
+
+複数ワークスペースの `bun dev` のような **長時間サービス** を 1 タスクで束ねて並列起動する宣言型 API。
+`task.each` と立て付けは同じ(サービス列を静的に渡し、グラフに辺として乗る)が、実行モデルは別物
+(逐次・短命の `runEach` に対して、`compose` は並列・長時間・fail-fast・SIGINT 伝播を持つ)。
+
+```typescript
+const ui = task("ui", async ({ cmd }) =>
+  cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/ui" }),
+);
+const api = task("api", async ({ cmd }) =>
+  cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/api" }),
+);
+
+task.compose("dev", { desc: "全サービス並列起動" }, ui, api);
+```
+
+実行モデル:
+
+- 全サービスを並列に起動し、出力は **`[name]` prefix 付きでストリーミング** して stdout へ流す
+  (`NO_COLOR` / 非 TTY 以外では各サービスに固定色を割り当て、ラベルは最大幅にパディングして整列)。
+- **fail-fast が既定**: 1 サービスでも exit したら他に SIGTERM を送り、grace (既定 5 秒) 経過後も
+  生きていれば SIGKILL する。長時間サービスにとっては正常終了 (exit 0) も想定外なので **fail-fast の
+  発火条件に含める**(エラーメッセージは `exited unexpectedly (code 0)` で区別する)。
+- **SIGINT / SIGTERM を受け取ったら全サービスを停止** する。
+  ハンドラは `runCompose` 関数内で install / uninstall するため、compose タスクを抜けたら元に戻る。
+- **task ハンドル渡しの場合**, サービスごとに `AbortController` を用意し、`createTaskContext({ abortSignal })`
+  経由で `ctx.cmd` の起動した grandchild プロセスにも SIGTERM が届く。本体で複数 `cmd` を呼ぶ複雑な task を
+  渡すケースは MVP では非対応とし、各 task は 1 つの長時間サービスを起動するシンプルな形を推奨する。
+- **Ready 検出は MVP では入れない**(将来 `readyPattern` / サービス間依存仕様で拡張する)。
+- **graph 描画**: `task.each` と同様、`compose` 列は `TaskOptions.compose: ComposeStep[]` として焼かれ、
+  `bake <task> --graph` の出力にも `サービス --> タスク` の辺として現れる(コマンドタプルはコマンド
+  文字列ラベルのノードになる)。`deps` は通常 DAG の解決対象だが、`compose` 列は表示用で実行順を変えない
+  (`resolveTasks` は `deps` のみを辿る)。
+- **`ctx.compose` は提供しない**(公開 API は宣言形 `task.compose` のみ、API 表面を最小化する方針)。
+  内部実装としては `TaskContext.runCompose` が存在するが、`Bakefile.d.ts` には載せず、ユーザーは
+  `task.compose` 経由でのみ並列サービスを起動する。
+
+#### `task.each` との使い分け
+
+| 観点 | `task.each` (runEach) | `task.compose` |
+|---|---|---|
+| プロセス | 短命(完了を待つ) | 長時間(明示的に停止するまで動く) |
+| 実行 | 逐次 | 並列 |
+| 出力 | 工程ごとに buffer、失敗時のみ表示 | prefix 付きストリーミング |
+| 既定の失敗扱い | fail-fast(最初の失敗で残りを止める) | fail-fast(1 つでも exit したら全停止) |
+| 正常 exit の扱い | 成功として次へ | **失敗扱い**(長時間サービスでは想定外) |
+| SIGINT/SIGTERM 伝播 | (短命のため不要) | 全サービスへ SIGTERM、grace 後 SIGKILL |
+| 用途 | typecheck / lint / build / test の連鎖 | dev サーバ・worker など長時間サービスの compose |
+
+### 5.5 注入される global
 
 | 名前 | 型 | 用途 |
 |---|---|---|

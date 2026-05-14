@@ -1,6 +1,8 @@
 import type {
+  ComposeItem,
   RunEachItem,
   Task,
+  TaskComposeOptions,
   TaskEachOptions,
   TaskFunction,
   TaskOptions,
@@ -15,6 +17,10 @@ declare global {
   ) => Task) & {
     default: (task: Task) => void;
     each: (name: string, ...args: (TaskEachOptions | RunEachItem)[]) => Task;
+    compose: (
+      name: string,
+      ...args: (TaskComposeOptions | ComposeItem)[]
+    ) => Task;
   };
 }
 
@@ -36,6 +42,8 @@ export async function loadBakefile(
     };
 
     taskFn.each = (name, ...args) => registry.registerEach(name, ...args);
+
+    taskFn.compose = (name, ...args) => registry.registerCompose(name, ...args);
 
     globalThis.task = taskFn;
 
