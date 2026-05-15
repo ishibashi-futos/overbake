@@ -282,5 +282,7 @@ export async function main(args: string[]): Promise<void> {
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  await main(args);
+  (async () => {
+    await main(args);
+  })();
 }

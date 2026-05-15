@@ -18,6 +18,24 @@ const build = task(
   },
 );
 
+task(
+  "build:prod",
+  {
+    desc: "production 向け CLI ビルド（minify + bytecode で起動高速化・サイズ削減）",
+    deps: ["clean"],
+    inputs: ["src/**/*.ts"],
+  },
+  async ({ cmd }) => {
+    await cmd("bun", [
+      ...buildOpts,
+      "--minify",
+      "--bytecode",
+      "--sourcemap=none",
+      "--outfile=dist/bake",
+    ]);
+  },
+);
+
 const typecheck = task("typecheck", { desc: "型チェック" }, async ({ cmd }) => {
   await cmd("bunx", ["tsc", "--noEmit"]);
 });
