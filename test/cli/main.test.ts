@@ -11,6 +11,7 @@ import { loadBakefile } from "../../src/bakefile/loader.ts";
 import { TaskRegistry } from "../../src/bakefile/registry.ts";
 import { main } from "../../src/cli/main.ts";
 import { createTaskContext } from "../../src/runtime/executor.ts";
+import { BAKE_VERSION } from "../../src/version.ts";
 import {
   useConsoleCapture,
   useProcessExitMock,
@@ -362,6 +363,14 @@ describe("CLI help/list integration", () => {
   useTempDir("overbake-cli-test", { chdir: true });
   const { logs, errors } = useConsoleCapture();
   const exitCode = useProcessExitMock();
+
+  test("main --version は埋め込みバージョンを出力する", async () => {
+    await main(["--version"]);
+
+    expect(logs.join("\n")).toBe(BAKE_VERSION);
+    expect(errors).toEqual([]);
+    expect(exitCode()).toBeUndefined();
+  });
 
   test("main list shows all tasks", async () => {
     const bakefileContent = `

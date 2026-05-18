@@ -57,6 +57,16 @@ export interface GlazeCommand {
   check: boolean;
 }
 
+export interface VersionCommand {
+  type: "version";
+}
+
+export interface UpdateCommand {
+  type: "update";
+  check: boolean;
+  force: boolean;
+}
+
 export type Command =
   | InitCommand
   | ListCommand
@@ -66,7 +76,9 @@ export type Command =
   | CompletionsCommand
   | CompleteCommand
   | DoctorCommand
-  | GlazeCommand;
+  | GlazeCommand
+  | VersionCommand
+  | UpdateCommand;
 
 // --graph / --graph=mermaid / --graph=dot などを抽出する
 function extractGraph(args: string[]): string | undefined {
@@ -111,6 +123,18 @@ export function parseArgs(args: string[]): Command {
   if (command === "__complete") {
     const subcommand = args[1] ?? "";
     return { type: "complete", subcommand };
+  }
+
+  if (command === "--version" || command === "-v") {
+    return { type: "version" };
+  }
+
+  if (command === "update") {
+    return {
+      type: "update",
+      check: args.includes("--check"),
+      force: args.includes("--force"),
+    };
   }
 
   if (

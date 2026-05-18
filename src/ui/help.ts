@@ -68,6 +68,9 @@ Commands:
   --help                 Show this help message
   --help <task>          Show help for a specific task
   completions <shell>    Output shell completion script (zsh/bash/fish)
+  update                 Update bake to the latest GitHub release
+  update --check         Check for a newer release without installing
+  -v, --version          Print the bake version
 
 Options (for run):
   --dry-run              Print tasks without executing

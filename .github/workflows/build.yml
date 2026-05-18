@@ -5,10 +5,17 @@ on:
     branches: [master]
     tags: ["v*"]
 
+# 既定は read-only。release への書き込みは release job だけに与える。
+permissions:
+  contents: read
+
 jobs:
   build:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # install script / build / test 中に書き込みトークンを露出させない。
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -43,10 +50,58 @@ jobs:
         if: github.ref_type == 'tag'
         run: bun src/cli/main.ts build:prod
 
-      - name: Upload bake binary
+      - name: Upload bake binary (CI artifact) — branch push
+        if: github.ref_type == 'branch'
         uses: actions/upload-artifact@v4
         with:
           name: bake-${{ matrix.os }}-${{ github.ref_name }}
           path: dist/bake
           if-no-files-found: error
           retention-days: 14
+
+      - name: Determine release asset name — tag push
+        if: github.ref_type == 'tag'
+        id: asset
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            echo "name=bake-linux-x64" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=bake-darwin-arm64" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stage release binary — tag push
+        if: github.ref_type == 'tag'
+        run: cp dist/bake "${{ steps.asset.outputs.name }}"
+
+      # release job へ受け渡すための workflow アーティファクト。
+      # ここでは write 権限は不要。
+      - name: Upload release binary artifact — tag push
+        if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.asset.outputs.name }}
+          path: ${{ steps.asset.outputs.name }}
+          if-no-files-found: error
+          retention-days: 1
+
+  # tag push 専用。GitHub Release への書き込み権限はこの job だけが持つ。
+  release:
+    name: Attach binaries to GitHub Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Attach binaries to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          fail_on_unmatched_files: true

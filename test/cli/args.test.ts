@@ -401,4 +401,45 @@ describe("bake glaze - parseArgs", () => {
       expect(result.check).toBe(true);
     }
   });
+
+  test('"--version" は version コマンド', () => {
+    expect(parseArgs(["--version"]).type).toBe("version");
+  });
+
+  test('"-v" は version コマンド', () => {
+    expect(parseArgs(["-v"]).type).toBe("version");
+  });
+
+  test('"update" は check=false / force=false', () => {
+    const result = parseArgs(["update"]);
+    expect(result.type).toBe("update");
+    if (result.type === "update") {
+      expect(result.check).toBe(false);
+      expect(result.force).toBe(false);
+    }
+  });
+
+  test('"update --check" は check=true', () => {
+    const result = parseArgs(["update", "--check"]);
+    if (result.type === "update") {
+      expect(result.check).toBe(true);
+      expect(result.force).toBe(false);
+    }
+  });
+
+  test('"update --force" は force=true', () => {
+    const result = parseArgs(["update", "--force"]);
+    if (result.type === "update") {
+      expect(result.check).toBe(false);
+      expect(result.force).toBe(true);
+    }
+  });
+
+  test('"update --check --force" は両方 true', () => {
+    const result = parseArgs(["update", "--check", "--force"]);
+    if (result.type === "update") {
+      expect(result.check).toBe(true);
+      expect(result.force).toBe(true);
+    }
+  });
 });

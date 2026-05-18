@@ -24,6 +24,8 @@ import {
   renderTaskList,
   renderTaskNotFound,
 } from "../ui/help.ts";
+import { runUpdate } from "../update/update.ts";
+import { BAKE_VERSION } from "../version.ts";
 import { collectWatchPaths, startWatch } from "../watch/watcher.ts";
 import { parseArgs } from "./args.ts";
 import {
@@ -90,6 +92,22 @@ export async function main(args: string[]): Promise<void> {
 
     if (command.type === "glaze") {
       const exitCode = await runGlaze(command.filePath, command.check);
+      if (exitCode !== 0) {
+        process.exit(exitCode);
+      }
+      return;
+    }
+
+    if (command.type === "version") {
+      console.log(BAKE_VERSION);
+      return;
+    }
+
+    if (command.type === "update") {
+      const exitCode = await runUpdate({
+        check: command.check,
+        force: command.force,
+      });
       if (exitCode !== 0) {
         process.exit(exitCode);
       }
