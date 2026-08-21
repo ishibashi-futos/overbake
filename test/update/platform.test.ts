@@ -3,6 +3,7 @@ import { CliError } from "../../src/cli/error.ts";
 import {
   ASSET_DARWIN_ARM64,
   ASSET_LINUX_X64,
+  ASSET_WINDOWS_X64,
   resolveAssetName,
 } from "../../src/update/platform.ts";
 
@@ -15,9 +16,13 @@ describe("resolveAssetName", () => {
     expect(resolveAssetName("darwin", "arm64")).toBe(ASSET_DARWIN_ARM64);
   });
 
+  test("win32/x64 maps to bake-windows-x64.exe", () => {
+    expect(resolveAssetName("win32", "x64")).toBe(ASSET_WINDOWS_X64);
+  });
+
   test("unsupported platform throws CliError with exitCode 2", () => {
     const cases: [NodeJS.Platform, string][] = [
-      ["win32", "x64"],
+      ["win32", "arm64"],
       ["linux", "arm64"],
       ["darwin", "x64"],
     ];

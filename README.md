@@ -11,6 +11,33 @@ Bun 製の TypeScript タスクランナー。`Bakefile.ts` で型補完が効�
 - **まとめて実行 (`ctx.runEach` / `task.each`)**: 複数タスク・コマンドを順に実行し、出力を抑えて失敗だけ表示。`task.each` で宣言すると工程が `--graph` 出力にも現れる（[詳細](docs/features/run-each.md)）
 - **並列サービス起動 (`task.compose`)**: 複数フォルダ（ワークスペース）の長時間サービスを並列起動。`[name]` prefix 付きストリーミング出力、1 つでも落ちたら他に SIGTERM、Ctrl+C で全停止
 
+## インストールと更新
+
+GitHub Releases から自分のプラットフォーム向けバイナリをダウンロードし、PATH の通ったディレクトリに
+`bake`（Windows は `bake.exe`）として配置します。
+
+```bash
+# linux/x64
+curl -fsSL -o /usr/local/bin/bake https://github.com/ishibashi-futos/overbake/releases/latest/download/bake-linux-x64
+chmod +x /usr/local/bin/bake
+
+# darwin/arm64 (macOS Apple Silicon)
+curl -fsSL -o /usr/local/bin/bake https://github.com/ishibashi-futos/overbake/releases/latest/download/bake-darwin-arm64
+chmod +x /usr/local/bin/bake
+
+# win32/x64 は bake-windows-x64.exe を PATH の通ったディレクトリへ bake.exe としてダウンロードしてください
+```
+
+更新は `bake update` で行います。
+
+```bash
+bake update          # 最新版を確認し、新しければダウンロードして置き換える
+bake update --check  # 確認のみ。ダウンロード・置き換えは行わない
+bake update --force  # 同一/新しいバージョンでも再インストールする
+```
+
+詳細は [docs/features/self-update.md](docs/features/self-update.md) を参照してください。
+
 ## How to Use
 
 ### CLI コマンド
@@ -78,6 +105,15 @@ bake --help build
 bake completions zsh > ~/.zsh/completions/_bake   # zsh
 bake completions bash > ~/.bash_completion.d/bake # bash
 bake completions fish > ~/.config/fish/completions/bake.fish # fish
+
+# bake を最新の GitHub Release に更新する
+bake update
+bake update --check  # 確認のみ。ダウンロード・置き換えは行わない
+bake update --force  # 同一/新しいバージョンでも再インストールする
+
+# バージョンを表示
+bake --version
+bake -v
 ```
 
 ### Bakefile.ts の書き方

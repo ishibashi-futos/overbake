@@ -70,6 +70,7 @@ Commands:
   completions <shell>    Output shell completion script (zsh/bash/fish)
   update                 Update bake to the latest GitHub release
   update --check         Check for a newer release without installing
+  update --force         Reinstall even when already up to date
   -v, --version          Print the bake version
 
 Options (for run):

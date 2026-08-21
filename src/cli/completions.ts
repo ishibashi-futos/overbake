@@ -24,7 +24,8 @@ _bake() {
     '--quiet[タスク出力を抑制]' \\
     '--verbose[詳細ログを表示]' \\
     '--no-color[カラー出力を無効化]' \\
-    '--check[glaze: 書き換えずに整形チェックのみ]' \\
+    '--check[glaze/update: 書き換えずに確認のみ]' \\
+    '--force[update: 最新でも再インストール]' \\
     '--yes[確認プロンプトをスキップ]' \\
     '-y[確認プロンプトをスキップ]' \\
     '-l[タスク一覧を表示]' \\
@@ -51,7 +52,7 @@ export function generateBashCompletion(): string {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
   local subcommands="init list completions doctor glaze update"
-  local flags="--help --dry-run --explain --watch --keep-going --quiet --verbose --no-color --check --yes -y -l"
+  local flags="--help --dry-run --explain --watch --keep-going --quiet --verbose --no-color --check --force --yes -y -l"
 
   if [[ "$prev" == "completions" ]]; then
     COMPREPLY=($(compgen -W "zsh bash fish" -- "$cur"))
@@ -89,7 +90,8 @@ complete -c bake -l keep-going -d '失敗しても続行'
 complete -c bake -l quiet -d 'タスク出力を抑制'
 complete -c bake -l verbose -d '詳細ログを表示'
 complete -c bake -l no-color -d 'カラー出力を無効化'
-complete -c bake -l check -d 'glaze: 書き換えずに整形チェックのみ'
+complete -c bake -l check -d 'glaze/update: 書き換えずに確認のみ'
+complete -c bake -l force -d 'update: 最新でも再インストール'
 complete -c bake -l yes -d '確認プロンプトをスキップ'
 complete -c bake -s y -d '確認プロンプトをスキップ'
 complete -c bake -s l -d 'タスク一覧を表示'

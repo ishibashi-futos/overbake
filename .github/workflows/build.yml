@@ -19,7 +19,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # asset は src/update/platform.ts の ASSET_* 定数と一致している必要がある。
+        include:
+          - os: ubuntu-latest
+            asset: bake-linux-x64
+            binary: dist/bake
+            checks: true
+          - os: macos-latest
+            asset: bake-darwin-arm64
+            binary: dist/bake
+            checks: true
+          # テストは Unix 前提（chmod 0o755 や /tmp 直下の一時ディレクトリなど）のため、
+          # Windows ではビルドとアーティファクト生成のみ実行する。
+          # 更新機構の Windows 分岐は platform を注入して Unix 上で検証済み
+          # （test/update/installer.test.ts の describe("win32")）。
+          # Windows でのテスト実行対応は follow-up。
+          - os: windows-latest
+            asset: bake-windows-x64.exe
+            binary: dist/bake.exe
+            checks: false
 
     steps:
       - name: Checkout
@@ -34,12 +52,15 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Typecheck (bake typecheck)
+        if: matrix.checks
         run: bun src/cli/main.ts typecheck
 
       - name: Format check (bake fmt)
+        if: matrix.checks
         run: bun src/cli/main.ts fmt
 
       - name: Test (bake test)
+        if: matrix.checks
         run: bun src/cli/main.ts test
 
       - name: Build (bake build) — branch push
@@ -55,23 +76,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bake-${{ matrix.os }}-${{ github.ref_name }}
-          path: dist/bake
+          path: ${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 14
 
-      - name: Determine release asset name — tag push
-        if: github.ref_type == 'tag'
-        id: asset
-        run: |
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            echo "name=bake-linux-x64" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=bake-darwin-arm64" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Stage release binary — tag push
         if: github.ref_type == 'tag'
-        run: cp dist/bake "${{ steps.asset.outputs.name }}"
+        shell: bash
+        run: cp "${{ matrix.binary }}" "${{ matrix.asset }}"
 
       # release job へ受け渡すための workflow アーティファクト。
       # ここでは write 権限は不要。
@@ -79,8 +91,8 @@ jobs:
         if: github.ref_type == 'tag'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.asset.outputs.name }}
-          path: ${{ steps.asset.outputs.name }}
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
           if-no-files-found: error
           retention-days: 1
 
@@ -105,3 +117,4 @@ jobs:
         with:
           files: release-assets/*
           fail_on_unmatched_files: true
+          generate_release_notes: true
