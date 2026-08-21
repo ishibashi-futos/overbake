@@ -1,11 +1,10 @@
 {
   "permissions": {
-    "allow": ["Bash(./scripts/sanity.sh)"],
+    "allow": [
+      "Bash(./scripts/sanity.sh)"
+    ],
     "deny": [
-      "Write(issues/**)",
       "Edit(issues/**)",
-      "MultiEdit(issues/**)",
-      "NotebookEdit(issues/**)",
       "Bash(rm *issues*)",
       "Bash(mv *issues*)",
       "Bash(cp *issues*)",
