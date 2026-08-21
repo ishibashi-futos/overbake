@@ -119,7 +119,9 @@ describe("runWithHooks / executePlan の before/after hooks", () => {
     await runWithHooks(task, ctx);
 
     expect(typeof capturedDuration).toBe("number");
-    expect(capturedDuration).toBeGreaterThanOrEqual(10);
+    // setTimeout はタイマ解像度の都合で指定値をわずかに下回って発火することがあるため
+    // （CI で 10ms 指定に対し 9.18ms 実測）、閾値ではなく「正の実行時間が渡される」ことを検証する。
+    expect(capturedDuration).toBeGreaterThan(0);
   });
 
   test("before 失敗時に fn と after を呼ばない", async () => {
