@@ -34,6 +34,19 @@ describe("UI help rendering", () => {
     expect(output).toContain("--dry-run");
   });
 
+  test("renderGlobalHelp shows daemon-related commands (ps/stop/logs)", () => {
+    const output = renderGlobalHelp();
+    expect(output).toContain("ps");
+    expect(output).toContain("stop <task>");
+    expect(output).toContain("stop --all");
+    expect(output).toContain("logs <task>");
+  });
+
+  test("renderGlobalHelp shows -d, --daemon option", () => {
+    const output = renderGlobalHelp();
+    expect(output).toContain("-d, --daemon");
+  });
+
   test("renderTaskHelp shows task details", () => {
     const task = {
       name: "build",
@@ -53,6 +66,29 @@ describe("UI help rendering", () => {
     expect(output).toContain("src/**");
     expect(output).toContain("dist");
     expect(output).toContain("NODE_ENV");
+  });
+
+  test("renderTaskHelp shows Schedule for a cron task", () => {
+    const task = {
+      name: "backup",
+      fn: () => {},
+      options: {
+        desc: "定期バックアップ",
+        cron: { schedule: "@daily", steps: [] },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Schedule: @daily");
+  });
+
+  test("renderTaskHelp does not show Schedule for a non-cron task", () => {
+    const task = {
+      name: "build",
+      fn: () => {},
+      options: { desc: "Build project" },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).not.toContain("Schedule:");
   });
 
   test("renderTaskNotFound suggests similar tasks", () => {
@@ -171,5 +207,37 @@ describe("issue #21: renderTaskList グルーピング表示", () => {
     const output = renderTaskList(tasks);
     expect(output).toContain("darwin only");
     expect(output).not.toMatch(/all-platforms.*only/);
+  });
+
+  test("cron タスクは (cron: <schedule>) が表示される（ungrouped）", () => {
+    const tasks = [
+      {
+        name: "backup",
+        fn: () => {},
+        options: {
+          desc: "定期バックアップ",
+          cron: { schedule: "@daily", steps: [] },
+        },
+      },
+      { name: "no-cron", fn: () => {}, options: {} },
+    ];
+    const output = renderTaskList(tasks);
+    expect(output).toContain("cron: @daily");
+    expect(output).not.toMatch(/no-cron.*cron:/);
+  });
+
+  test("cron タスクは (cron: <schedule>) が表示される（グループ表示）", () => {
+    const tasks = [
+      {
+        name: "job:backup",
+        fn: () => {},
+        options: {
+          desc: "定期バックアップ",
+          cron: { schedule: "0 3 * * *", steps: [] },
+        },
+      },
+    ];
+    const output = renderTaskList(tasks);
+    expect(output).toContain("cron: 0 3 * * *");
   });
 });

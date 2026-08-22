@@ -22,7 +22,7 @@ interface Edge {
   to: string;
 }
 
-// 各タスクの「自分に向かう辺」（deps、task.each、task.compose の工程）を重複なく列挙する
+// 各タスクの「自分に向かう辺」（deps、task.each、task.compose、task.cron の工程）を重複なく列挙する
 function incomingEdges(tasks: TaskDefinition[]): Edge[] {
   const edges: Edge[] = [];
   const seen = new Set<string>();
@@ -36,6 +36,8 @@ function incomingEdges(tasks: TaskDefinition[]): Edge[] {
     for (const dep of task.options?.deps ?? []) add(dep, task.name);
     for (const step of task.options?.each ?? []) add(stepNode(step), task.name);
     for (const step of task.options?.compose ?? [])
+      add(stepNode(step), task.name);
+    for (const step of task.options?.cron?.steps ?? [])
       add(stepNode(step), task.name);
   }
   return edges;

@@ -281,3 +281,51 @@ describe("TaskRegistry.register return value", () => {
     expect(registry.get("t")).toBe(def);
   });
 });
+
+describe("TaskRegistry.registerCron", () => {
+  test("スケジュールと工程列を options.cron へ静的記述として保存する", () => {
+    const registry = new TaskRegistry();
+    const backup = registry.register(
+      "backup",
+      { desc: "バックアップ" },
+      () => {},
+    );
+
+    const def = registry.registerCron(
+      "nightly",
+      { schedule: "0 3 * * *", desc: "毎晩バックアップ" },
+      backup,
+      ["bun", ["report.ts"]],
+    );
+
+    expect(def.name).toBe("nightly");
+    expect(def.isMeta).toBe(false);
+    expect(def.options?.desc).toBe("毎晩バックアップ");
+    expect(def.options?.cron).toEqual({
+      schedule: "0 3 * * *",
+      steps: [
+        { kind: "task", name: "backup", desc: "バックアップ" },
+        { kind: "command", label: "bun report.ts" },
+      ],
+    });
+    // schedule は cron 記述へ移し、TaskOptions 側には残さない
+    expect(
+      (def.options as Record<string, unknown> | undefined)?.schedule,
+    ).toBeUndefined();
+  });
+
+  test("登録時には cron 式を検証しない（検証は parseSchedule に一本化）", () => {
+    const registry = new TaskRegistry();
+    expect(() =>
+      registry.registerCron("bad", { schedule: "not a cron" }),
+    ).not.toThrow();
+  });
+
+  test("同名タスクの二重登録はエラー", () => {
+    const registry = new TaskRegistry();
+    registry.register("dup", () => {});
+    expect(() => registry.registerCron("dup", { schedule: "@daily" })).toThrow(
+      DuplicateTaskError,
+    );
+  });
+});

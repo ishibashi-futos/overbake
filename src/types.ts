@@ -20,6 +20,19 @@ export interface TaskOptions {
    * 実行は生成された fn が runCompose で行う。
    */
   compose?: ComposeStep[];
+  /**
+   * task.cron() で宣言された定期実行の静的記述。
+   * 実行は生成された fn が runCron で行う。
+   */
+  cron?: CronDefinition;
+}
+
+/** task.cron() で宣言された定期実行の静的記述 */
+export interface CronDefinition {
+  /** cron 式（`0 3 * * *` / `@daily` / `@every 30s`）。検証は parseSchedule が唯一の担当 */
+  schedule: string;
+  /** 1 回の発火で順に実行される工程列 */
+  steps: RunEachStep[];
 }
 
 /** task.each() で宣言された 1 工程の静的記述 */
@@ -69,6 +82,9 @@ export type ComposeItem = Task | RunEachCommand;
 /** task.compose() の先頭に渡せるオプション（省略可）。MVP では TaskOptions と同等。 */
 export type TaskComposeOptions = TaskOptions;
 
+/** task.cron() の第 2 引数。schedule は必須。 */
+export type TaskCronOptions = TaskOptions & { schedule: string };
+
 export interface TaskContext {
   name: string;
   root: string;
@@ -93,6 +109,12 @@ export interface TaskContext {
    * 1 サービスでも exit したら他に SIGTERM → grace 後 SIGKILL する fail-fast。
    */
   runCompose(items: ComposeItem[]): Promise<void>;
+  /**
+   * 内部 API: task.cron で生成されるタスクから呼ばれる定期実行スケジューラ。
+   * 公開 d.ts には載せず、ユーザーは task.cron 経由でのみ使用する。
+   * 工程が失敗してもスケジューラは停止せず、次の発火を待つ。
+   */
+  runCron(schedule: string, items: RunEachItem[]): Promise<void>;
 }
 
 export type TaskFunction = (ctx: TaskContext) => void | Promise<void>;

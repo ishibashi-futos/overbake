@@ -1,5 +1,16 @@
 import type { TaskDefinition } from "../types.ts";
 
+// platforms / cron の付加情報をタスク名・説明の後ろに付ける文字列を組み立てる。
+// ungrouped / グループ表示の両方から呼ばれる共通ロジック。
+function formatTaskSuffix(task: TaskDefinition): string {
+  const platforms = task.options?.platforms;
+  const platformsStr =
+    platforms && platforms.length > 0 ? ` (${platforms.join(", ")} only)` : "";
+  const cron = task.options?.cron;
+  const cronStr = cron ? ` (cron: ${cron.schedule})` : "";
+  return `${platformsStr}${cronStr}`;
+}
+
 export function renderTaskList(tasks: TaskDefinition[]): string {
   if (tasks.length === 0) {
     return "No tasks found.";
@@ -29,12 +40,7 @@ export function renderTaskList(tasks: TaskDefinition[]): string {
   for (const task of ungrouped) {
     const paddedName = task.name.padEnd(maxNameLength);
     const desc = task.options?.desc ? ` - ${task.options.desc}` : "";
-    const platforms = task.options?.platforms;
-    const platformsStr =
-      platforms && platforms.length > 0
-        ? ` (${platforms.join(", ")} only)`
-        : "";
-    lines.push(`  ${paddedName}${desc}${platformsStr}`);
+    lines.push(`  ${paddedName}${desc}${formatTaskSuffix(task)}`);
   }
 
   // `:` プレフィックスでグループ表示
@@ -43,12 +49,7 @@ export function renderTaskList(tasks: TaskDefinition[]): string {
     for (const task of groupTasks) {
       const paddedName = task.name.padEnd(maxNameLength);
       const desc = task.options?.desc ? ` - ${task.options.desc}` : "";
-      const platforms = task.options?.platforms;
-      const platformsStr =
-        platforms && platforms.length > 0
-          ? ` (${platforms.join(", ")} only)`
-          : "";
-      lines.push(`  ${paddedName}${desc}${platformsStr}`);
+      lines.push(`  ${paddedName}${desc}${formatTaskSuffix(task)}`);
     }
   }
 
@@ -71,6 +72,12 @@ Commands:
   update                 Update bake to the latest GitHub release
   update --check         Check for a newer release without installing
   update --force         Reinstall even when already up to date
+  ps                     List running daemons
+  stop <task>            Stop a running daemon
+  stop --all             Stop all running daemons
+  logs <task>            Show the last 50 lines of a daemon log
+  logs <task> -n <N>     Show the last N lines of a daemon log
+  logs <task> -f         Follow a daemon log
   -v, --version          Print the bake version
 
 Options (for run):
@@ -79,6 +86,12 @@ Options (for run):
   --watch                Watch input files and re-run on changes
   --graph[=mermaid|dot]  Print dependency graph without executing
   --no-summary           Skip the execution summary output
+  --keep-going           Continue past task failures
+  --quiet                Suppress task output
+  --verbose              Show detailed logs
+  --no-color             Disable colored output
+  --yes, -y              Skip confirmation prompts
+  -d, --daemon           Run the task as a background daemon (single task only)
 `;
 }
 
@@ -105,6 +118,10 @@ export function renderTaskHelp(task: TaskDefinition): string {
   lines.push(
     `Platforms: ${platforms.length > 0 ? platforms.join(", ") : "(all)"}`,
   );
+
+  if (task.options?.cron) {
+    lines.push(`Schedule: ${task.options.cron.schedule}`);
+  }
 
   return lines.join("\n");
 }

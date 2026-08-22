@@ -5,6 +5,7 @@ import { loadBakefile } from "../bakefile/loader.ts";
 import { TaskRegistry } from "../bakefile/registry.ts";
 import { CliError } from "../cli/error.ts";
 import { expandWildcardTargets, resolveTasks } from "../graph/resolver.ts";
+import { captureConsole } from "../shared/console-capture.ts";
 import type { TaskDefinition } from "../types.ts";
 import {
   colorRed,
@@ -70,6 +71,58 @@ function buildPlatformSkipReason(platforms: NodeJS.Platform[]): string {
   return `skipped (platform: ${platforms.join(", ")} only)`;
 }
 
+/** platforms 未指定は全 OS で実行。指定がある場合は現在の OS が含まれるかで判定する。 */
+export function isPlatformAllowed(
+  task: TaskDefinition,
+  platform: NodeJS.Platform,
+): boolean {
+  const allowed = task.options?.platforms;
+  if (!allowed || allowed.length === 0) return true;
+  return allowed.includes(platform);
+}
+
+/**
+ * confirm 付きタスクの確認プロンプトを実行する。
+ * 拒否されたらエラーを投げて実行を中断する。--yes 指定時は何も聞かない。
+ */
+export async function confirmTask(
+  task: TaskDefinition,
+  options: { yes?: boolean; confirmFn?: ConfirmFn } = {},
+): Promise<void> {
+  if (!task.options?.confirm || options.yes) return;
+
+  const confirmFn = options.confirmFn ?? createDefaultConfirm();
+  const messages = Array.isArray(task.options.confirm)
+    ? task.options.confirm
+    : [task.options.confirm];
+
+  for (const message of messages) {
+    const confirmed = await confirmFn(message);
+    if (!confirmed) {
+      throw new Error(`Task '${task.name}' cancelled by user.`);
+    }
+  }
+}
+
+/**
+ * 実行計画に含まれる全タスクの確認プロンプトをまとめて実行する。
+ * デーモン起動時に「親プロセス（TTY がある側）で聞いてから detach する」ために使う。
+ */
+export async function confirmPlan(
+  plan: ExecutionPlan,
+  options: {
+    yes?: boolean;
+    confirmFn?: ConfirmFn;
+    platform?: NodeJS.Platform;
+  } = {},
+): Promise<void> {
+  const platform = (options.platform ?? process.platform) as NodeJS.Platform;
+  for (const task of plan.tasks) {
+    if (!isPlatformAllowed(task, platform)) continue;
+    await confirmTask(task, options);
+  }
+}
+
 export async function buildPlan(taskName: string): Promise<ExecutionPlan>;
 export async function buildPlan(taskNames: string[]): Promise<ExecutionPlan>;
 export async function buildPlan(
@@ -106,34 +159,20 @@ export async function executePlan(
   const wallStart = performance.now();
   const confirmFn = options.confirmFn ?? createDefaultConfirm();
 
+  const currentPlatform = (options.platform ??
+    process.platform) as NodeJS.Platform;
+
   for (const task of plan.tasks) {
-    // プラットフォームチェック: platforms 未指定は全 OS で実行
-    const allowedPlatforms = task.options?.platforms;
-    const currentPlatform = (options.platform ??
-      process.platform) as NodeJS.Platform;
-    if (
-      allowedPlatforms &&
-      allowedPlatforms.length > 0 &&
-      !allowedPlatforms.includes(currentPlatform)
-    ) {
-      const reason = buildPlatformSkipReason(allowedPlatforms);
+    if (!isPlatformAllowed(task, currentPlatform)) {
+      const reason = buildPlatformSkipReason(
+        task.options?.platforms as NodeJS.Platform[],
+      );
       logger.info(formatTaskSkipped(task.name, reason, options.noColor));
       results.push({ name: task.name, status: "skipped", durationMs: 0 });
       continue;
     }
 
-    if (task.options?.confirm && !options.yes) {
-      const confirmMessages = Array.isArray(task.options.confirm)
-        ? task.options.confirm
-        : [task.options.confirm];
-
-      for (const message of confirmMessages) {
-        const confirmed = await confirmFn(message);
-        if (!confirmed) {
-          throw new Error(`Task '${task.name}' cancelled by user.`);
-        }
-      }
-    }
+    await confirmTask(task, { yes: options.yes, confirmFn });
 
     const ctx = createTaskContext({
       name: task.name,
@@ -147,17 +186,13 @@ export async function executePlan(
     const startTime = Date.now();
     const suppressedOutput: string[] = [];
     const suppressedErrors: string[] = [];
-    const originalLog = console.log;
-    const originalError = console.error;
 
-    if (options.quiet) {
-      console.log = (...args: unknown[]) => {
-        suppressedOutput.push(args.join(" "));
-      };
-      console.error = (...args: unknown[]) => {
-        suppressedErrors.push(args.join(" "));
-      };
-    }
+    // --quiet のときだけタスクの console 出力を握りつぶす
+    const releaseConsole = options.quiet
+      ? captureConsole((text, stream) => {
+          (stream === "log" ? suppressedOutput : suppressedErrors).push(text);
+        })
+      : undefined;
 
     let taskError: unknown;
     try {
@@ -165,8 +200,7 @@ export async function executePlan(
     } catch (error) {
       taskError = error;
     } finally {
-      console.log = originalLog;
-      console.error = originalError;
+      releaseConsole?.();
     }
 
     const durationMs = Date.now() - startTime;

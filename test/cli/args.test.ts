@@ -443,3 +443,47 @@ describe("bake glaze - parseArgs", () => {
     }
   });
 });
+
+describe("`--` 以降のパススルー", () => {
+  test("`--` 以降はタスク名としてもフラグとしても解釈しない", () => {
+    const result = parseArgs([
+      "build",
+      "--",
+      "--watch",
+      "-d",
+      "--quiet",
+      "--no-summary",
+    ]);
+
+    expect(result.type).toBe("run");
+    if (result.type !== "run") return;
+    expect(result.taskNames).toEqual(["build"]);
+    expect(result.flags.watch).toBe(false);
+    expect(result.flags.daemon).toBe(false);
+    expect(result.flags.quiet).toBe(false);
+    expect(result.flags.noSummary).toBe(false);
+  });
+
+  test("`--` 以降の --graph はグラフ出力を発動させない", () => {
+    const result = parseArgs(["build", "--", "--graph=dot"]);
+
+    expect(result.type).toBe("run");
+    if (result.type !== "run") return;
+    expect(result.flags.graph).toBeUndefined();
+  });
+
+  test("`--` 以降の --help はヘルプ表示にならない", () => {
+    const result = parseArgs(["build", "--", "--help"]);
+
+    expect(result.type).toBe("run");
+  });
+
+  test("`--` より前のフラグは通常どおり解釈する", () => {
+    const result = parseArgs(["build", "-d", "--", "--watch"]);
+
+    expect(result.type).toBe("run");
+    if (result.type !== "run") return;
+    expect(result.flags.daemon).toBe(true);
+    expect(result.flags.watch).toBe(false);
+  });
+});

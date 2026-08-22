@@ -831,3 +831,18 @@ describe("bake doctor - main 統合テスト", () => {
     expect(output).toContain("ERROR");
   });
 });
+
+describe("デーモン子プロセスのログ監視", () => {
+  const tmp = useTempDir("overbake-daemon-env", { chdir: true });
+  useConsoleCapture();
+  useProcessExitMock();
+
+  test("OVERBAKE_DAEMON_LOG は読み取り後に環境から取り除く（孫プロセスへ引き継がない）", async () => {
+    writeFileSync("Bakefile.ts", `task("noop", () => {});`);
+    process.env.OVERBAKE_DAEMON_LOG = resolve(tmp.path, "daemon.log");
+
+    await main(["--version"]);
+
+    expect(process.env.OVERBAKE_DAEMON_LOG).toBeUndefined();
+  });
+});

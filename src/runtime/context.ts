@@ -12,6 +12,7 @@ import type {
 } from "../types.ts";
 import { Logger } from "../ui/logger.ts";
 import { runCompose as runComposeImpl } from "./compose.ts";
+import { runCron as runCronImpl } from "./cron.ts";
 import { runEach as runEachImpl } from "./run-each.ts";
 
 export interface CreateTaskContextParams {
@@ -120,12 +121,33 @@ export function createTaskContext(
     },
     async runEach(...items: (RunEachOptions | RunEachItem)[]): Promise<void> {
       await runEachImpl(
-        { taskName: name, root, cwd, createContext: createTaskContext },
+        {
+          taskName: name,
+          root,
+          cwd,
+          createContext: createTaskContext,
+          write: onOutput,
+          abortSignal,
+        },
         items,
       );
     },
     async runCompose(items: ComposeItem[]): Promise<void> {
       await runComposeImpl({ taskName: name, root, cwd }, items);
+    },
+    async runCron(schedule: string, items: RunEachItem[]): Promise<void> {
+      await runCronImpl(
+        {
+          taskName: name,
+          root,
+          cwd,
+          createContext: createTaskContext,
+          write: onOutput,
+          abortSignal,
+        },
+        schedule,
+        items,
+      );
     },
   };
 }

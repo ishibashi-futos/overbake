@@ -129,6 +129,82 @@ task("build", () => {});`,
     expect(output).toContain("ERROR");
   });
 
+  test("不正な cron 式は ERROR として検出する", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `const job = task("job", () => {});
+task.cron("nightly", { schedule: "99 * * * *" }, job);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("nightly");
+    expect(output).toContain("Invalid cron schedule");
+  });
+
+  test("正しい cron 式なら error にならない", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `const job = task("job", () => {});
+task.cron("nightly", { schedule: "@every 30s" }, job);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(0);
+    expect(logs.join("\n")).toContain("0 errors");
+  });
+
+  test("決して発火しない cron 式も ERROR として検出する", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `const job = task("job", () => {});
+task.cron("never", { schedule: "0 0 30 2 *" }, job);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("never");
+  });
+
+  test("compose / cron の工程に confirm 付きタスクがあると WARN", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `const risky = task("risky", { confirm: "本当に?" }, () => {});
+task.compose("dev", risky);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(0);
+    const output = logs.join("\n");
+    expect(output).toContain("WARN");
+    expect(output).toContain("confirm");
+    expect(output).toContain("risky");
+  });
+
+  test("サブコマンドと同名のタスクは WARN", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync("Bakefile.ts", `task("logs", () => {});`);
+
+    const code = await runDoctor();
+
+    expect(code).toBe(0);
+    const output = logs.join("\n");
+    expect(output).toContain("WARN");
+    expect(output).toContain("logs");
+  });
+
   test("error が複数ある場合も全件表示する", async () => {
     writeFileSync(".gitignore", ".overbake/\n");
     writeFileSync(

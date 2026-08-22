@@ -1,3 +1,4 @@
+import { captureConsole } from "../shared/console-capture.ts";
 import { commandLabel, isCommand, isTask } from "../shared/run-each.ts";
 import type {
   RunEachItem,
@@ -18,7 +19,15 @@ export interface RunEachDeps {
     root: string;
     cwd: string;
     onOutput: (text: string) => void;
+    abortSignal?: AbortSignal;
   }) => TaskContext;
+  /**
+   * 進行状況の出力先。未指定なら stdout へ直接書く。
+   * task.cron や task.compose の配下で動く場合、prefix 付き出力へ流すために差し替える。
+   */
+  write?: (text: string) => void;
+  /** 各工程の ctx へ引き継ぐ中断シグナル（cron が compose 配下で停止されたときの伝播用） */
+  abortSignal?: AbortSignal;
 }
 
 const SEPARATOR = "-".repeat(50);
@@ -46,13 +55,19 @@ export async function runEach(
     items = args.slice(1) as RunEachItem[];
   }
 
-  process.stdout.write(`Running ${deps.taskName}...\n`);
+  const write =
+    deps.write ??
+    ((text: string): void => {
+      process.stdout.write(text);
+    });
+
+  write(`Running ${deps.taskName}...\n`);
 
   const failures: Failure[] = [];
 
   for (const item of items) {
     const label = isCommand(item) ? commandLabel(item) : taskLabel(item);
-    process.stdout.write(`  - ${label}... `);
+    write(`  - ${label}... `);
 
     const buffer: string[] = [];
     const subCtx = deps.createContext({
@@ -60,12 +75,10 @@ export async function runEach(
       root: deps.root,
       cwd: deps.cwd,
       onOutput: (text) => buffer.push(text),
+      abortSignal: deps.abortSignal,
     });
 
-    const originalLog = console.log;
-    const originalError = console.error;
-    console.log = (...a: unknown[]) => buffer.push(`${a.join(" ")}\n`);
-    console.error = (...a: unknown[]) => buffer.push(`${a.join(" ")}\n`);
+    const releaseConsole = captureConsole((text) => buffer.push(`${text}\n`));
 
     let error: unknown;
     try {
@@ -77,12 +90,11 @@ export async function runEach(
     } catch (err) {
       error = err;
     } finally {
-      console.log = originalLog;
-      console.error = originalError;
+      releaseConsole();
     }
 
     if (error) {
-      process.stdout.write("❌\n");
+      write("❌\n");
       failures.push({
         label,
         output: buffer.join(""),
@@ -90,23 +102,23 @@ export async function runEach(
       });
       if (!options.keepGoing) break;
     } else {
-      process.stdout.write("✅\n");
+      write("✅\n");
     }
   }
 
   if (failures.length > 0) {
     for (const failure of failures) {
-      process.stdout.write(`\n[${failure.label}] failed\n`);
-      process.stdout.write(`${SEPARATOR}\n`);
+      write(`\n[${failure.label}] failed\n`);
+      write(`${SEPARATOR}\n`);
       const trimmed = failure.output.trim();
-      if (trimmed) process.stdout.write(`${trimmed}\n`);
-      process.stdout.write(`${failure.error.message}\n`);
-      process.stdout.write(`${SEPARATOR}\n`);
+      if (trimmed) write(`${trimmed}\n`);
+      write(`${failure.error.message}\n`);
+      write(`${SEPARATOR}\n`);
     }
     const labels = failures.map((f) => f.label).join(", ");
     throw new Error(`runEach failed: ${labels}`);
   }
 
   const done = options.done ?? `✨ done (${items.length} task(s))`;
-  process.stdout.write(`${done}\n`);
+  write(`${done}\n`);
 }

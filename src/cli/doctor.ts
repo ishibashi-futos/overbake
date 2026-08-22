@@ -3,8 +3,22 @@ import { dirname, resolve } from "node:path";
 import { discoverBakefile } from "../bakefile/discover.ts";
 import { loadBakefile } from "../bakefile/loader.ts";
 import { TaskRegistry } from "../bakefile/registry.ts";
+import { nextRun, parseSchedule } from "../cron/schedule.ts";
 import { BakefileNotFoundError } from "../shared/errors.ts";
 import type { TaskDefinition } from "../types.ts";
+
+/** タスク名として使うと CLI サブコマンドに隠れてしまう予約語 */
+const RESERVED_COMMANDS = [
+  "init",
+  "list",
+  "doctor",
+  "glaze",
+  "update",
+  "completions",
+  "ps",
+  "stop",
+  "logs",
+];
 
 interface DoctorIssue {
   level: "error" | "warning";
@@ -139,6 +153,52 @@ export async function runDoctor(): Promise<number> {
       issues.push({
         level: "error",
         message: `メタタスク '${task.name}' は fn を持たないのに outputs が指定されています`,
+      });
+    }
+  }
+
+  // cron 式の静的検証（parseSchedule が唯一の検証点）
+  for (const task of tasks) {
+    const cron = task.options?.cron;
+    if (!cron) continue;
+    try {
+      // パースだけでなく「次の発火時刻が求まるか」まで見る。
+      // `0 0 30 2 *`（2 月 30 日）のような決して発火しない式はここで初めて分かる。
+      nextRun(parseSchedule(cron.schedule), new Date());
+    } catch (e) {
+      issues.push({
+        level: "error",
+        message: `cron タスク '${task.name}': ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
+  // compose / cron の工程に confirm 付きタスクが含まれる（warning）
+  // これらの工程は executePlan を経由せず fn を直接呼ぶため confirm は確認されない
+  const confirmTasks = new Set(
+    tasks.filter((t) => t.options?.confirm).map((t) => t.name),
+  );
+  for (const task of tasks) {
+    const steps = [
+      ...(task.options?.compose ?? []),
+      ...(task.options?.cron?.steps ?? []),
+    ];
+    for (const step of steps) {
+      if (step.kind === "task" && confirmTasks.has(step.name)) {
+        issues.push({
+          level: "warning",
+          message: `'${task.name}' の工程 '${step.name}' の confirm は確認されずに実行されます（compose / cron の工程は確認プロンプトを経由しません）`,
+        });
+      }
+    }
+  }
+
+  // CLI サブコマンドと同名のタスクは `bake <name>` で実行できない（warning）
+  for (const task of tasks) {
+    if (RESERVED_COMMANDS.includes(task.name)) {
+      issues.push({
+        level: "warning",
+        message: `タスク '${task.name}' は bake のサブコマンドと同名のため 'bake ${task.name}' では実行できません`,
       });
     }
   }

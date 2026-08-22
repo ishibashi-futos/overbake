@@ -359,7 +359,125 @@ task.compose("dev", { desc: "全サービス並列起動" }, ui, api);
 | SIGINT/SIGTERM 伝播 | (短命のため不要) | 全サービスへ SIGTERM、grace 後 SIGKILL |
 | 用途 | typecheck / lint / build / test の連鎖 | dev サーバ・worker など長時間サービスの compose |
 
-### 5.5 注入される global
+### 5.5 `task.cron()` — 定期実行ジョブ
+
+スケジュールに従って工程列を繰り返し実行する宣言型 API。工程の書き方は `task.each` と同じで、
+実行モデルだけが違う（1 回きりの逐次実行 → スケジュールに従った繰り返し）。
+
+```typescript
+const backup = task("backup", async ({ cmd }) => {
+  await cmd("bun", ["scripts/backup.ts"]);
+});
+
+task.cron("nightly", { schedule: "0 3 * * *", desc: "毎晩バックアップ" }, backup);
+```
+
+スケジュール書式:
+
+| 書式 | 例 | 意味 |
+|---|---|---|
+| 5 フィールド cron | `*/15 9-17 * * 1-5` | 分 時 日 月 曜日（`*` / `*/n` / `a-b` / `a-b/n` / カンマ区切り） |
+| エイリアス | `@hourly` `@daily` `@midnight` `@weekly` `@monthly` `@yearly` `@annually` | 定番スケジュール |
+| 固定間隔 | `@every 30s` `@every 5m` | 直前の実行完了からの経過時間で発火（最小 1s） |
+
+実行モデル:
+
+- **1 回の発火は `runEach` と同じ**（逐次実行、成功工程の出力は抑制、失敗工程だけ表示）。
+- **工程が失敗してもスケジューラは停止しない**（cron の慣習）。失敗を報告して次の発火を待つ。
+- **次回時刻は実行完了後に計算する**。実行が長引いて次の発火時刻を過ぎた回は自然にスキップされ、
+  多重起動しない。
+- **ローカル時刻**で判定する。タイムゾーン指定は MVP では持たない（DST の境界は Date の挙動に従う）。
+- `abortSignal` が abort されるとループを抜ける。これにより `task.compose` の要素として渡した
+  cron タスクが Ctrl+C や fail-fast で正しく停止する。
+- 出力は `ctx` 経由（`write`）に流すため、compose 配下では `[name]` prefix が付く。
+- **検証は `parseSchedule` に一本化**する。登録時には検証せず、実行時と `bake doctor` の
+  両方が同じ関数を呼ぶ（検証ロジックの二重化を避ける）。
+- **graph 描画**: 工程列は `TaskOptions.cron.steps` として焼かれ、`--graph` に `工程 --> タスク` の
+  辺として現れる（`task.each` / `task.compose` と同じ扱い）。
+
+### 5.6 デーモンモード（`-d`）
+
+`bake -d <task>` でタスクをバックグラウンドプロセスとして起動する。長時間サービス
+（`task.compose`）や定期ジョブ（`task.cron`）を端末から切り離して常駐させるための仕組み。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant P as bake（親・TTY あり）
+    participant C as bake（子・detached）
+    participant L as .overbake/logs/<task>.log
+
+    U->>P: bake -d dev
+    P->>P: buildPlan（未定義タスク・循環を検出）
+    P->>U: confirm: の確認プロンプト
+    P->>C: spawn(detached, stdio→ログ fd, --yes 付与)
+    P->>P: .overbake/daemons/dev.json へ PID 記録
+    P-->>U: Started daemon 'dev' (pid ...)
+    C->>L: タスク出力を追記
+    U->>P: bake stop dev
+    P->>C: プロセスグループへ SIGTERM → 5s → SIGKILL
+```
+
+設計上の判断:
+
+- **検証と確認は detach 前の親で行う**。設定エラーを前景の exit 2 として返し、`confirm:` は
+  TTY のある側で応答させるため。子には `--yes` を付けて渡し、ログの向こうでプロンプト待ちにしない。
+- **停止はプロセスグループ単位**。`detached: true` で子をプロセスグループのリーダーにし、
+  `kill(-pid)` で `ctx.cmd` の孫プロセスや compose のサービスまで確実に停止させる
+  （PID 単体への kill では孫が残る）。Windows にはプロセスグループシグナルが無いため PID を直接指定する。
+- **再実行コマンドの組み立て**。`bun build --compile` 製バイナリでは `process.argv[1]` が
+  `/$bunfs/root/...` という仮想パスになり再実行できないため、この場合は `execPath` だけで起動する。
+  開発時（`bun src/cli/main.ts`）はスクリプトパスを引き継ぐ。
+- **ログは追記**。起動ごとに `=== <task> started at <ISO8601> ===` の区切りを入れる。
+  子の stdout はファイルなので `isTTY` が false になり、色付けは自動的に無効化される。
+- **1 タスクのみ**。複数常駐は `task.compose` で束ねる（compose 全体が 1 デーモンになる）。
+- **`--dry-run` / `--explain` は `-d` より優先**（副作用が無く、前景で結果を見たいコマンドのため）。
+
+ファイル配置:
+
+```
+.overbake/
+├── logs/<task>.log       # stdout / stderr の追記先
+└── daemons/<task>.json   # name / pid / startedAt / logFile / command / cwd
+```
+
+ログのローテーション:
+
+長期常駐でログが無限に増えないよう、**デーモンの子プロセス自身**が自分のログサイズを定期確認し
+（既定 5 秒間隔）、しきい値を超えたら世代退避する。既定は 1MB × 3 世代。
+
+```
+dev.log → dev.log.1 → dev.log.2 → dev.log.3 →（削除）
+```
+
+**なぜ rename ではなく copytruncate なのか**: デーモンの子プロセスと、そこから `ctx.cmd` や
+`Bun.$` で起動される孫プロセスは、ログファイルの **fd を継承したまま** 書き続ける。ファイルを
+rename して新規作成すると、書き手は rename 後の inode に書き続けるため新しいログが空のままになる。
+Node/Bun には `dup2` 相当が無く、起動後に子の fd を差し替えることもできない。そこで
+「内容を `<log>.1` へコピー → live なファイルを `truncate(0)`」という copytruncate 方式を採る。
+fd は `O_APPEND` で開いているため切り詰め後の書き込みは先頭から続き、スパースホールも生じない。
+コピーと切り詰めの間の書き込みが失われうる点は logrotate の `copytruncate` と同じ既知の妥協。
+
+**なぜ子プロセス側で行うのか**: `-d` を実行した親プロセスは spawn 後すぐ終了するため、常駐中の
+サイズを見張れるのは fd を握っている子プロセス自身しかいない。親は `OVERBAKE_DAEMON_LOG` で
+ログのパスを子へ渡し、子が起動時にサイズ監視タイマーを張る（タイマーは `unref` するので
+プロセスの寿命には影響しない）。前回までのログの超過分は、書き手が居ない `-d` 起動時に親が退避する。
+
+| 環境変数 | 既定 | 意味 |
+|---|---|---|
+| `OVERBAKE_LOG_MAX_BYTES` | `1048576`(1MB) | しきい値。`0` で無効 |
+| `OVERBAKE_LOG_KEEP` | `3` | 保持世代数。`0` は退避せず切り詰めのみ |
+| `OVERBAKE_LOG_CHECK_MS` | `5000` | サイズ確認間隔 |
+
+既知の制限（MVP では扱わない）:
+
+| 制限 | 影響 | 判断 |
+|---|---|---|
+| `bake logs` は全体を読んでから末尾を切り出す | 巨大ログでメモリを使う | 実装の単純さを優先 |
+| 状態ファイルは PID ベース | PID 再利用で別プロセスを生存と誤認しうる | 起動時刻の照合まではせず、単純さを優先 |
+
+### 5.7 注入される global
 
 | 名前 | 型 | 用途 |
 |---|---|---|
@@ -647,6 +765,10 @@ flowchart TD
 | `bake --help` | グローバルヘルプ |
 | `bake --help <task>` | タスク詳細(deps/inputs/outputs/env を含む) |
 | `bake clean-cache` | `.overbake/cache.json` を削除 |
+| `bake doctor` | Bakefile.ts の静的検証（タスクは実行しない） |
+| `bake ps` | 起動中デーモンの一覧 |
+| `bake stop <task>` / `bake stop --all` | デーモンの停止 |
+| `bake logs <task>` | デーモンのログ表示（`-n <行数>` / `-f` 追従） |
 
 ### 11.2 フラグ
 
@@ -661,14 +783,19 @@ flowchart TD
 | `--keep-going` | 失敗しても他タスクを継続 |
 | `--quiet` | タスク出力を抑制 |
 | `--verbose` | ハッシュ判定の詳細も出力 |
+| `-d` / `--daemon` | タスクをバックグラウンドのデーモンとして起動 |
+| `--yes` / `-y` | `confirm:` の確認をスキップ |
 | `--` | 以降をタスクへの引数として `argv` に渡す |
 
 ### 11.3 終了コード
 
+`src/cli/main.ts` の最上位 catch 節での判定基準:
+
 - `0`: 全タスク成功
-- `1`: タスク実行失敗
-- `2`: 設定エラー(循環依存、未定義タスク参照、Bakefile.ts 不在等)
-- `130`: SIGINT (Ctrl+C)
+- `1`: タスク実行失敗、および `2` に該当しないその他のエラー
+- `2`: 設定エラー。`CliError`(明示的に exitCode 2 で throw されたもの)と、`BakefileNotFoundError`(Bakefile.ts 不在) / `DuplicateDefaultTaskError` / `WildcardNoMatchError` / `TaskNotFoundError`(未定義タスク参照) / `CircularDependencyError`(循環依存)
+
+SIGINT (Ctrl+C) 受信時の終了コードを制御する処理は実装されていない(`grep -rn "SIGINT" src/` の該当箇所は `task.compose` の子プロセス停止処理のみで、CLI 全体の終了コードには関与しない)。
 
 ---
 
@@ -676,33 +803,21 @@ flowchart TD
 
 ### 12.1 生成される `Bakefile.d.ts`
 
-```typescript
-// Bakefile.d.ts — bake init が生成。コミット推奨。
-// このファイルは TypeScript の型補完のためだけに存在し、
-// 実行時には参照されません(Overbake CLI が globalThis に注入します)。
+`Bakefile.d.ts` の内容は `src/init/templates.ts` の `BAKEFILE_DTS_TEMPLATE` が単一の真実の源(single source of truth)である。本節はそこから重複してコードを貼らず、宣言される型・関数の要点のみを示す。詳細な型定義は同ファイルを参照すること。
 
-type TaskFn = () => void | Promise<void>;
-
-interface HookContext {
-  name: string;
-}
-
-interface TaskOptions {
-  desc?: string;
-  deps?: string[];
-  inputs?: string[];
-  outputs?: string[];
-  env?: string[];
-  before?: (ctx: HookContext) => void | Promise<void>;
-  after?: (ctx: HookContext & { ok: boolean; durationMs: number }) => void | Promise<void>;
-}
-
-declare function task(name: string, fn: TaskFn): void;
-declare function task(name: string, opts: TaskOptions, fn: TaskFn): void;
-declare function task(name: string, opts: TaskOptions): void;
-
-declare const argv: readonly string[];
-```
+- `Task`: `task()` / `task.each()` / `task.compose()` / `task.cron()` が返すハンドル。`name` を持ち、他の `task.*` 呼び出しの工程として渡せる。
+- `TaskContext`: タスク本体に渡されるコンテキスト。`name` / `root` / `cwd` に加え、`cmd()`（サブプロセス実行）・`rm()`・`exists()`・`resolve()`・`log()`・`runEach()`（複数工程の逐次実行）を提供する。
+- `TaskFn`: `(ctx: TaskContext) => void | Promise<void>`。
+- `TaskPlatform`: `platforms` オプションで使える Node.js の `process.platform` 相当の文字列リテラル型。
+- `HookContext`: `before` / `after` フックに渡されるコンテキスト。`after` は `ok` / `durationMs` も受け取る。
+- `TaskOptions`: `desc` / `deps` / `inputs` / `outputs` / `env` / `confirm` / `platforms` / `before` / `after`。
+- `RunEachOptions`: `runEach()` や `task.each()` の先頭に置ける `done` / `keepGoing`。
+- `task(name, fn)` / `task(name, opts, fn)` / `task(name, opts)`: 単体タスクを登録する。
+- `task.each(name, ...)`: 複数の工程を逐次実行するタスクを登録する。
+- `task.compose(name, ...)`: 複数の長時間サービスを並列起動するタスクを登録する。
+- `task.cron(name, options, ...)`: スケジュールに従って工程列を繰り返し実行するタスクを登録する(`options.schedule` は必須)。
+- `task.default(task)`: デフォルトタスクを指定する。
+- `argv`: `readonly string[]`。CLI に渡された `--` 以降の引数。
 
 ### 12.2 なぜこれが動くか
 

@@ -113,3 +113,6 @@ dist
 .tern-port
 
 issues/
+
+# overbake (デーモンのログ・状態ファイル)
+.overbake/

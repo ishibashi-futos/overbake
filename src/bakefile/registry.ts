@@ -6,10 +6,12 @@ import { commandLabel, isCommand, isTask } from "../shared/run-each.ts";
 import type {
   ComposeItem,
   ComposeStep,
+  CronDefinition,
   RunEachItem,
   RunEachOptions,
   RunEachStep,
   TaskComposeOptions,
+  TaskCronOptions,
   TaskDefinition,
   TaskEachOptions,
   TaskFunction,
@@ -122,6 +124,35 @@ export class TaskRegistry {
     };
 
     return this.register(name, { ...taskOptions, compose }, fn);
+  }
+
+  /**
+   * task.cron(): 工程列をスケジュールに従って繰り返し実行するタスクを登録する。
+   * スケジュールと工程列は options.cron に静的記述として保存され（グラフ描画・doctor 用）、
+   * 生成された fn が ctx.runCron で実行する。
+   * cron 式の検証は実行時／doctor 側の parseSchedule に一本化する（登録時には検証しない）。
+   */
+  registerCron(
+    name: string,
+    options: TaskCronOptions,
+    ...items: RunEachItem[]
+  ): TaskDefinition {
+    const { schedule, ...taskOptions } = options;
+
+    const cron: CronDefinition = {
+      schedule,
+      steps: items.map((item) =>
+        isCommand(item)
+          ? { kind: "command", label: commandLabel(item) }
+          : { kind: "task", name: item.name, desc: item.options?.desc },
+      ),
+    };
+
+    const fn: TaskFunction = async (ctx) => {
+      await ctx.runCron(schedule, items);
+    };
+
+    return this.register(name, { ...taskOptions, cron }, fn);
   }
 
   get(name: string): TaskDefinition | undefined {

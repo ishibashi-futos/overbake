@@ -3,6 +3,7 @@ import type {
   RunEachItem,
   Task,
   TaskComposeOptions,
+  TaskCronOptions,
   TaskEachOptions,
   TaskFunction,
   TaskOptions,
@@ -20,6 +21,11 @@ declare global {
     compose: (
       name: string,
       ...args: (TaskComposeOptions | ComposeItem)[]
+    ) => Task;
+    cron: (
+      name: string,
+      options: TaskCronOptions,
+      ...items: RunEachItem[]
     ) => Task;
   };
 }
@@ -44,6 +50,9 @@ export async function loadBakefile(
     taskFn.each = (name, ...args) => registry.registerEach(name, ...args);
 
     taskFn.compose = (name, ...args) => registry.registerCompose(name, ...args);
+
+    taskFn.cron = (name, options, ...items) =>
+      registry.registerCron(name, options, ...items);
 
     globalThis.task = taskFn;
 

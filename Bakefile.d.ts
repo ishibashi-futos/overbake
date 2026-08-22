@@ -83,6 +83,15 @@ type TaskEachOptions = TaskOptions & RunEachOptions;
 /** task.compose() の先頭に渡せるオプション（省略可） */
 type TaskComposeOptions = TaskOptions;
 
+/** task.cron() の第 2 引数。schedule は必須。 */
+type TaskCronOptions = TaskOptions & {
+  /**
+   * cron 式。5 フィールド（`分 時 日 月 曜日`）のほか、
+   * `@daily` などのエイリアスと `@every 30s` 形式の固定間隔が使える。
+   */
+  schedule: string;
+};
+
 declare function task(name: string, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions): Task;
@@ -107,6 +116,18 @@ declare namespace task {
   export function compose(
     name: string,
     ...items: (TaskComposeOptions | ComposeItem)[]
+  ): Task;
+
+  /**
+   * 工程列をスケジュールに従って繰り返し実行するタスクを宣言的に登録する。
+   * 1 回の発火は task.each と同じ逐次実行。工程が失敗してもスケジューラは止まらない。
+   * 次回時刻は実行完了後に計算するため多重起動しない。
+   * `bake <task>` で前景実行、`bake -d <task>` でデーモン実行、task.compose の要素にもできる。
+   */
+  export function cron(
+    name: string,
+    options: TaskCronOptions,
+    ...items: RunEachItem[]
   ): Task;
 
   function defaultTask(task: Task): void;
