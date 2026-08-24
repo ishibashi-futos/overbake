@@ -72,6 +72,7 @@ describe("init", () => {
   });
 
   test("generated Bakefile.d.ts type-checks task.default and Bun globals", async () => {
+    const repoRoot = resolve(import.meta.dir, "../..");
     const tempDtsDir = resolve(
       "/tmp",
       `overbake-dts-test-${Date.now()}-${Math.random()}`,
@@ -81,6 +82,7 @@ describe("init", () => {
     try {
       const dtsPath = resolve(tempDtsDir, "Bakefile.d.ts");
       const tsPath = resolve(tempDtsDir, "test.ts");
+      const tsconfigPath = resolve(tempDtsDir, "tsconfig.json");
 
       await init();
       const generatedDts = readFileSync("Bakefile.d.ts", "utf-8");
@@ -96,22 +98,30 @@ describe("init", () => {
       // `/// <reference types="bun" />` だけで Bun.* が解決することを検証する。
       // typeRoots は一時ディレクトリからでも @types/bun を引けるようにするため。
       writeFileSync(
-        resolve(tempDtsDir, "tsconfig.json"),
+        tsconfigPath,
         JSON.stringify({
           compilerOptions: {
+            target: "ESNext",
             strict: true,
             skipLibCheck: true,
             noEmit: true,
             types: [],
-            typeRoots: [resolve(import.meta.dir, "../../node_modules/@types")],
+            typeRoots: [resolve(repoRoot, "node_modules/@types")],
           },
           files: ["test.ts"],
         }),
       );
 
-      execSync("bunx tsc -p .", { cwd: tempDtsDir, stdio: "pipe" });
+      // cwd はリポジトリルート。一時ディレクトリで bunx すると tsc を
+      // npm から取りに行き、実行するバージョンが不定になるうえ CI で
+      // タイムアウトする。files は tsconfig.json の位置を基準に解決される。
+      execSync(`bunx tsc -p "${tsconfigPath}"`, {
+        cwd: repoRoot,
+        stdio: "pipe",
+      });
     } finally {
       rmSync(tempDtsDir, { recursive: true, force: true });
     }
-  });
+    // 実 tsc をサブプロセスで走らせるため、既定の 5s では CI で不足しうる
+  }, 15_000);
 });
