@@ -825,6 +825,8 @@ TypeScript の Language Server は **同階層の `.d.ts` を自動で参照す�
 
 実行時には CLI が `globalThis` に注入するため、`.d.ts` の宣言と実体が一致する。
 
+なお `Bakefile.ts` は `tsconfig.json` の `include` 外に置かれるため、エディタは inferred project として扱う。この場合 `@types/bun` が自動で取り込まれず、`Bun.file()` などが `Cannot find name 'Bun'` になることがある。そのため `Bakefile.d.ts` の先頭で `/// <reference types="bun" />` を宣言し、d.ts 自身の位置を起点に `node_modules/@types/bun` を解決させている(`types` 配列による自動取り込みの抑制を受けない)。
+
 ### 12.3 コミット推奨の理由
 
 - チームメンバーが clone 直後から補完が効く

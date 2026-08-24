@@ -17,6 +17,11 @@ export const BAKEFILE_DTS_TEMPLATE = `// Bakefile.d.ts — Overbake が globalTh
 // 実行時には参照されず、Bakefile.ts の型補完を提供するためだけに存在する
 // Bakefile.ts の triple-slash reference によって TS Language Server に読み込まれる
 
+// Bakefile.ts は tsconfig.json の include 外にあり、エディタでは bun の型が
+// 自動では入らない inferred project として扱われる。この参照が自ファイルの位置を
+// 起点に @types/bun を解決し、Bakefile.ts での Bun.* 補完を成立させる。
+/// <reference types="bun" />
+
 /** task() が返すハンドル。runEach / task.compose に渡せる。 */
 interface Task {
   readonly name: string;

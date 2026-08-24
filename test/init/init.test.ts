@@ -71,7 +71,7 @@ describe("init", () => {
     expect(updatedBakefileContent).toBe(originalBakefileContent);
   });
 
-  test("generated Bakefile.d.ts is valid TypeScript with task.default usage", async () => {
+  test("generated Bakefile.d.ts type-checks task.default and Bun globals", async () => {
     const tempDtsDir = resolve(
       "/tmp",
       `overbake-dts-test-${Date.now()}-${Math.random()}`,
@@ -88,13 +88,28 @@ describe("init", () => {
 
       writeFileSync(
         tsPath,
-        `/// <reference path="./Bakefile.d.ts" />\n\nconst x = task("x", () => {});\ntask.default(x);\n`,
+        `/// <reference path="./Bakefile.d.ts" />\n\nconst x = task("x", async () => {\n  await Bun.file("package.json").text();\n});\ntask.default(x);\n`,
       );
 
-      execSync(`bunx tsc --noEmit --strict "${tsPath}"`, {
-        cwd: tempDtsDir,
-        stdio: "pipe",
-      });
+      // エディタが Bakefile.ts を割り当てる inferred project を模した設定。
+      // types: [] で @types の自動取り込みを止め、d.ts の
+      // `/// <reference types="bun" />` だけで Bun.* が解決することを検証する。
+      // typeRoots は一時ディレクトリからでも @types/bun を引けるようにするため。
+      writeFileSync(
+        resolve(tempDtsDir, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            skipLibCheck: true,
+            noEmit: true,
+            types: [],
+            typeRoots: [resolve(import.meta.dir, "../../node_modules/@types")],
+          },
+          files: ["test.ts"],
+        }),
+      );
+
+      execSync("bunx tsc -p .", { cwd: tempDtsDir, stdio: "pipe" });
     } finally {
       rmSync(tempDtsDir, { recursive: true, force: true });
     }
