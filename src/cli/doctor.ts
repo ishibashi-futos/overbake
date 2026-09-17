@@ -4,6 +4,10 @@ import { discoverBakefile } from "../bakefile/discover.ts";
 import { loadBakefile } from "../bakefile/loader.ts";
 import { TaskRegistry } from "../bakefile/registry.ts";
 import { nextRun, parseSchedule } from "../cron/schedule.ts";
+import {
+  resolveComposeStages,
+  resolveServiceConfig,
+} from "../service/config.ts";
 import { BakefileNotFoundError } from "../shared/errors.ts";
 import type { TaskDefinition } from "../types.ts";
 
@@ -18,6 +22,7 @@ const RESERVED_COMMANDS = [
   "ps",
   "stop",
   "logs",
+  "docs",
 ];
 
 interface DoctorIssue {
@@ -126,6 +131,7 @@ export async function runDoctor(): Promise<number> {
 
   const tasks = registry.all();
   const taskNames = new Set(tasks.map((t) => t.name));
+  const taskMap = new Map(tasks.map((t) => [t.name, t]));
 
   // 未定義 依存タスク チェック（ワイルドカード は未対応）
   for (const task of tasks) {
@@ -173,21 +179,63 @@ export async function runDoctor(): Promise<number> {
     }
   }
 
+  // task.service の設定検証（resolveServiceConfig が唯一の検証点）
+  // 不正だったサービス名を控えておき、それを含む compose の二重報告を後段で避ける
+  const invalidServiceNames = new Set<string>();
+  for (const task of tasks) {
+    const service = task.options?.service;
+    if (!service) continue;
+    try {
+      resolveServiceConfig(service);
+    } catch (e) {
+      invalidServiceNames.add(task.name);
+      issues.push({
+        level: "error",
+        message: `サービス '${task.name}': ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
+  // task.compose の構成検証（resolveComposeStages が唯一の検証点）
+  // 静的記述（サービス名の string[][]）から registry で TaskDefinition を引いて検証する
+  for (const task of tasks) {
+    const compose = task.options?.compose;
+    if (!compose || compose.length === 0) continue;
+    // 設定不正として既に報告済みのサービスを含む compose は、同じ原因を二重に報告しない
+    if (compose.flat().some((name) => invalidServiceNames.has(name))) continue;
+
+    const stages = compose.map((stage) =>
+      stage
+        .map((name) => taskMap.get(name))
+        .filter((t): t is TaskDefinition => t !== undefined),
+    );
+    try {
+      resolveComposeStages(stages);
+    } catch (e) {
+      issues.push({
+        level: "error",
+        message: `compose '${task.name}': ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
   // compose / cron の工程に confirm 付きタスクが含まれる（warning）
   // これらの工程は executePlan を経由せず fn を直接呼ぶため confirm は確認されない
   const confirmTasks = new Set(
     tasks.filter((t) => t.options?.confirm).map((t) => t.name),
   );
   for (const task of tasks) {
-    const steps = [
-      ...(task.options?.compose ?? []),
-      ...(task.options?.cron?.steps ?? []),
+    const stepNames = [
+      ...(task.options?.compose?.flat() ?? []),
+      ...(task.options?.cron?.steps ?? [])
+        .filter((s) => s.kind === "task")
+        .map((s) => s.name),
     ];
-    for (const step of steps) {
-      if (step.kind === "task" && confirmTasks.has(step.name)) {
+    for (const stepName of stepNames) {
+      if (confirmTasks.has(stepName)) {
         issues.push({
           level: "warning",
-          message: `'${task.name}' の工程 '${step.name}' の confirm は確認されずに実行されます（compose / cron の工程は確認プロンプトを経由しません）`,
+          message: `'${task.name}' の工程 '${stepName}' の confirm は確認されずに実行されます（compose / cron の工程は確認プロンプトを経由しません）`,
         });
       }
     }

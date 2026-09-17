@@ -52,6 +52,10 @@ export interface DoctorCommand {
   type: "doctor";
 }
 
+export interface DocsCommand {
+  type: "docs";
+}
+
 export interface GlazeCommand {
   type: "glaze";
   filePath?: string;
@@ -94,6 +98,7 @@ export type Command =
   | CompletionsCommand
   | CompleteCommand
   | DoctorCommand
+  | DocsCommand
   | GlazeCommand
   | VersionCommand
   | UpdateCommand
@@ -178,6 +183,10 @@ export function parseArgs(args: string[]): Command {
 
   if (command === "doctor") {
     return { type: "doctor" };
+  }
+
+  if (command === "docs") {
+    return { type: "docs" };
   }
 
   if (command === "glaze") {

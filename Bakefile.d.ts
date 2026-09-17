@@ -7,19 +7,27 @@
 // 起点に @types/bun を解決し、Bakefile.ts での Bun.* 補完を成立させる。
 /// <reference types="bun" />
 
-/** task() が返すハンドル。runEach / task.compose に渡せる。 */
+/** task() が返すハンドル。runEach / task.each / task.cron / task.service に渡せる。 */
 interface Task {
   readonly name: string;
 }
 
-/** runEach / task.compose に渡せるコマンド: cmd と同じ [command, args?] 形式 */
+/** Service を通常の Task と型の上で区別するための目印（実行時には存在しない） */
+declare const serviceBrand: unique symbol;
+
+/** task.service() が返すハンドル。task.compose に渡せる。Task としても使える。 */
+interface Service extends Task {
+  readonly [serviceBrand]: true;
+}
+
+/** runEach / task.service に渡せるコマンド: cmd と同じ [command, args?] 形式 */
 type RunEachCommand = readonly [string, (readonly string[])?];
 
 /** runEach に渡せる要素: タスクオブジェクト または コマンド */
 type RunEachItem = Task | RunEachCommand;
 
-/** task.compose に渡せる要素: タスクオブジェクト または コマンド */
-type ComposeItem = Task | RunEachCommand;
+/** task.compose に渡せる要素: サービス または 同時に起動するサービスのグループ */
+type ComposeItem = Service | readonly Service[];
 
 interface RunEachOptions {
   /** 全件成功時に出力するメッセージ（未指定なら既定文言） */
@@ -32,6 +40,11 @@ interface TaskContext {
   name: string;
   root: string;
   cwd: string;
+  /**
+   * 停止要求のシグナル。task.compose / task.service 配下で停止・再起動するときに abort される。
+   * ctx.cmd は自動でこれに従う。プロセス内でサーバを動かすタスク関数は abort を待って return すること。
+   */
+  signal: AbortSignal;
   cmd(
     command: string,
     args?: readonly string[],
@@ -88,6 +101,47 @@ type TaskEachOptions = TaskOptions & RunEachOptions;
 /** task.compose() の先頭に渡せるオプション（省略可） */
 type TaskComposeOptions = TaskOptions;
 
+/** task.service() の起動処理: タスク関数 / コマンド / タスクハンドル */
+type ServiceRun = TaskFn | RunEachCommand | Task;
+
+/** 起動完了（ready）の判定方法。log / port / check のいずれか 1 つを指定する */
+type ServiceReadyProbe =
+  /** 出力行が一致したら ready（string は部分一致、RegExp は test） */
+  | { log: string | RegExp }
+  /** TCP 接続できたら ready（host の既定は "localhost"） */
+  | { port: number; host?: string }
+  /** true を返したら ready（false / throw は未 ready として intervalMs 後に再確認） */
+  | { check: () => boolean | Promise<boolean> };
+
+type ServiceReady = ServiceReadyProbe & {
+  /** ready になるまでの上限（ミリ秒）。超えたら失敗扱い。既定 60000 */
+  timeoutMs?: number;
+  /** port / check の確認間隔（ミリ秒）。既定 500 */
+  intervalMs?: number;
+};
+
+/** 失敗時の再起動と指数バックオフ（待機 = delayMs × factor^(n-1)、maxDelayMs で頭打ち） */
+interface ServiceRetry {
+  /** 失敗後に再起動する最大回数。初回起動は含まず、サービスの生存期間全体で数える */
+  attempts: number;
+  /** 1 回目の再起動前の待機（ミリ秒）。既定 1000 */
+  delayMs?: number;
+  /** 再起動ごとに待機へ掛ける倍率。既定 2 */
+  factor?: number;
+  /** 待機の上限（ミリ秒）。既定 30000 */
+  maxDelayMs?: number;
+}
+
+/** task.service() のオプション（省略可） */
+type TaskServiceOptions = TaskOptions & {
+  /** 起動完了の判定。省略時は起動した直後に ready とみなす */
+  ready?: ServiceReady;
+  /** 出力行がこれに一致したら失敗扱い（起動前後を問わず、ready.log より優先） */
+  failOn?: string | RegExp;
+  /** 失敗時の再起動。省略時は再起動しない */
+  retry?: ServiceRetry;
+};
+
 /** task.cron() の第 2 引数。schedule は必須。 */
 type TaskCronOptions = TaskOptions & {
   /**
@@ -113,10 +167,25 @@ declare namespace task {
   ): Task;
 
   /**
-   * 複数の長時間サービスを並列起動するタスクを宣言的に登録する。
-   * 1 つでも exit すると他に SIGTERM を送り、grace 後 SIGKILL する fail-fast。
+   * 長時間動くサービス（dev サーバ・DB・worker など）を宣言的に登録する。
+   * 起動完了（ready）と失敗の条件、失敗時の再起動（指数バックオフ）を指定できる。
+   * 失敗 = ready 前の終了 / ready タイムアウト / ready 後の終了（exit 0 を含む） / failOn に一致する出力。
+   * `bake <service>` で単体起動でき、task.compose に渡すと起動順を指定して束ねられる。
+   */
+  export function service(name: string, run: ServiceRun): Service;
+  export function service(
+    name: string,
+    options: TaskServiceOptions,
+    run: ServiceRun,
+  ): Service;
+
+  /**
+   * 複数のサービスを起動順に従って起動するタスクを宣言的に登録する。
+   * 引数の並びが起動順で、配列で渡したサービスは同時に起動する。
+   * 前のステージの全サービスが ready になってから次のステージを起動する（例: db, [api, worker], web）。
+   * retry を使い切って失敗したサービスが出たら全サービスに SIGTERM を送り、grace 後 SIGKILL する fail-fast。
    * 出力は [name] prefix 付きで stdout に行単位でストリーミングされる。
-   * サービス列は `bake <task> --graph` の出力にも辺として現れる。
+   * サービスは `bake <task> --graph` の出力にも辺として現れる。
    */
   export function compose(
     name: string,
@@ -127,7 +196,8 @@ declare namespace task {
    * 工程列をスケジュールに従って繰り返し実行するタスクを宣言的に登録する。
    * 1 回の発火は task.each と同じ逐次実行。工程が失敗してもスケジューラは止まらない。
    * 次回時刻は実行完了後に計算するため多重起動しない。
-   * `bake <task>` で前景実行、`bake -d <task>` でデーモン実行、task.compose の要素にもできる。
+   * `bake <task>` で前景実行、`bake -d <task>` でデーモン実行。
+   * task.compose に入れる場合は task.service で包む（例: task.service("poller", cronTask)）。
    */
   export function cron(
     name: string,

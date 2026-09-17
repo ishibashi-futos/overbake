@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import {
   appendFileSync,
@@ -16,10 +16,7 @@ import {
   readRecord,
   writeRecord,
 } from "../../src/daemon/state.ts";
-import { useTempDir } from "../support/sandbox.ts";
-
-// プロセスグループへのシグナル送信は POSIX 前提のため Windows では検証しない
-const describeIfPosix = process.platform === "win32" ? describe.skip : describe;
+import { describeIfPosix, useTempDir, waitUntil } from "../support/sandbox.ts";
 
 const CLI = resolve(import.meta.dir, "../../src/cli/main.ts");
 const TIMEOUT_MS = 30_000;
@@ -49,19 +46,6 @@ async function runCli(
   return { code, stdout, stderr };
 }
 
-/** 条件が真になるまでポーリングする（タイムアウトしたら false） */
-async function waitFor(
-  predicate: () => boolean,
-  timeoutMs = 15_000,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  return predicate();
-}
-
 function writeFixtures(dir: string): void {
   writeFileSync(
     resolve(dir, "Bakefile.ts"),
@@ -81,14 +65,14 @@ setInterval(() => {}, 1 << 30);
   );
 }
 
-/** compose 用の fixture: 2 サービスがそれぞれ PID ファイルを書いて常駐する */
+/** compose 用の fixture: 2 サービスがそれぞれ PID ファイルを書いて常駐する（task.service で包む） */
 function writeComposeFixtures(dir: string): void {
   writeFileSync(
     resolve(dir, "Bakefile.ts"),
-    `const a = task("svc-a", async ({ cmd }) => {
+    `const a = task.service("svc-a", async ({ cmd }) => {
   await cmd("bun", ["svc.ts"], { env: { SVC_NAME: "a" } });
 });
-const b = task("svc-b", async ({ cmd }) => {
+const b = task.service("svc-b", async ({ cmd }) => {
   await cmd("bun", ["svc.ts"], { env: { SVC_NAME: "b" } });
 });
 task.compose("dev", a, b);
@@ -141,9 +125,13 @@ setInterval(() => { console.log(line); }, 5);
 }
 
 describeIfPosix("daemon 統合", () => {
-  const tmp = useTempDir("overbake-daemon-int");
-
-  // テストが途中で失敗しても常駐プロセスを残さない
+  // 後片付けの afterEach は useTempDir より前に登録する。
+  // bun:test の afterEach は登録順に実行される（先に登録したものが先に走る）ため、
+  // 後に登録した useTempDir の afterEach（一時ディレクトリの rmSync。
+  // .overbake/daemons の状態ファイルもここで消える）が先に走ると、テストが途中で
+  // 失敗した際にここで常駐プロセスの状態ファイルを見つけられず、後片付けが効かなく
+  // なる。このコールバック自体が呼ばれるのはテスト実行後（下の tmp 宣言より後）
+  // なので、宣言前に書いても tmp.path を安全に参照できる。
   afterEach(async () => {
     for (const record of listRecords(tmp.path)) {
       try {
@@ -153,6 +141,8 @@ describeIfPosix("daemon 統合", () => {
       }
     }
   });
+
+  const tmp = useTempDir("overbake-daemon-int");
 
   test(
     "-d で起動 → ログ出力 → ps に載る → stop で孫プロセスごと停止する",
@@ -171,15 +161,15 @@ describeIfPosix("daemon 統合", () => {
 
       // ログにタスクの出力が流れてくる
       const log = logFile(tmp.path, "serve");
-      const gotLog = await waitFor(
+      await waitUntil(
         () => existsSync(log) && readFileSync(log, "utf-8").includes("serving"),
+        15000,
       );
-      expect(gotLog).toBe(true);
       expect(readFileSync(log, "utf-8")).toContain("=== serve started at");
 
       // 孫プロセス（ctx.cmd が起動した bun forever.ts）の PID
       const childPidFile = resolve(tmp.path, "child.pid");
-      await waitFor(() => existsSync(childPidFile));
+      await waitUntil(() => existsSync(childPidFile), 15000);
       const grandchildPid = Number(readFileSync(childPidFile, "utf-8"));
       expect(isAlive(grandchildPid)).toBe(true);
 
@@ -197,8 +187,8 @@ describeIfPosix("daemon 統合", () => {
       expect(stop.stdout).toContain("Stopped daemon 'serve'");
 
       // デーモン本体と孫プロセスの両方が停止している（プロセスグループへの SIGTERM）
-      expect(await waitFor(() => !isAlive(record.pid))).toBe(true);
-      expect(await waitFor(() => !isAlive(grandchildPid))).toBe(true);
+      await waitUntil(() => !isAlive(record.pid), 15000);
+      await waitUntil(() => !isAlive(grandchildPid), 15000);
       expect(readRecord(tmp.path, "serve")).toBeNull();
     },
     TIMEOUT_MS,
@@ -211,7 +201,7 @@ describeIfPosix("daemon 統合", () => {
 
       const first = await runCli(tmp.path, ["-d", "serve"]);
       expect(first.code).toBe(0);
-      await waitFor(() => readRecord(tmp.path, "serve") !== null);
+      await waitUntil(() => readRecord(tmp.path, "serve") !== null, 15000);
 
       const second = await runCli(tmp.path, ["-d", "serve"]);
       expect(second.code).toBe(2);
@@ -252,10 +242,10 @@ describeIfPosix("daemon 統合", () => {
       const log = logFile(tmp.path, "dev");
       const readLog = (): string =>
         existsSync(log) ? readFileSync(log, "utf-8") : "";
-      const bothUp = await waitFor(
+      await waitUntil(
         () => readLog().includes("a up") && readLog().includes("b up"),
+        15000,
       );
-      expect(bothUp).toBe(true);
       expect(readLog()).toContain("[svc-a]");
       expect(readLog()).toContain("[svc-b]");
 
@@ -268,9 +258,9 @@ describeIfPosix("daemon 統合", () => {
       expect(stop.code).toBe(0);
       expect(stop.stdout).toContain("dev");
 
-      expect(await waitFor(() => !isAlive(record.pid))).toBe(true);
+      await waitUntil(() => !isAlive(record.pid), 15000);
       for (const pid of pids) {
-        expect(await waitFor(() => !isAlive(pid))).toBe(true);
+        await waitUntil(() => !isAlive(pid), 15000);
       }
     },
     TIMEOUT_MS,
@@ -296,14 +286,14 @@ describeIfPosix("daemon 統合", () => {
           : 0;
 
       // 2 回以上発火することを確認（スケジューラが継続している）
-      expect(await waitFor(() => countTicks() >= 2)).toBe(true);
+      await waitUntil(() => countTicks() >= 2, 15000);
       const logText = readFileSync(log, "utf-8");
       expect(logText).toContain("schedule: @every 1s");
       expect(logText).toContain("next run at");
 
       const stop = await runCli(tmp.path, ["stop", "ticker"]);
       expect(stop.code).toBe(0);
-      expect(await waitFor(() => !isAlive(record.pid))).toBe(true);
+      await waitUntil(() => !isAlive(record.pid), 15000);
 
       // 停止後は発火が増えない
       const afterStop = countTicks();
@@ -334,20 +324,18 @@ describeIfPosix("daemon 統合", () => {
       const rotated = `${log}.1`;
 
       // 退避ファイルができる
-      expect(await waitFor(() => existsSync(rotated))).toBe(true);
+      await waitUntil(() => existsSync(rotated), 15000);
       expect(readFileSync(rotated, "utf-8")).toContain("LLLL");
 
       // 退避後も live なログに書き込みが続く（fd を握ったままでも書き込み位置が壊れない）
       const marker = "=== rotated at";
-      expect(
-        await waitFor(() => {
-          const text = readFileSync(log, "utf-8");
-          const afterMarker = text.slice(
-            text.lastIndexOf(marker) + marker.length,
-          );
-          return afterMarker.includes("LLLL");
-        }),
-      ).toBe(true);
+      await waitUntil(() => {
+        const text = readFileSync(log, "utf-8");
+        const afterMarker = text.slice(
+          text.lastIndexOf(marker) + marker.length,
+        );
+        return afterMarker.includes("LLLL");
+      }, 15000);
 
       // 切り詰めた直後のログに NUL 埋め（スパースホール）が残らない
       expect(readFileSync(log, "utf-8")).not.toContain("\u0000");
@@ -355,7 +343,7 @@ describeIfPosix("daemon 統合", () => {
       // 上限 + 1 回分の書き込み余地を大きく超えて肥大化しない
       const stop = await runCli(tmp.path, ["stop", "chatty"]);
       expect(stop.code).toBe(0);
-      expect(await waitFor(() => !isAlive(record.pid))).toBe(true);
+      await waitUntil(() => !isAlive(record.pid), 15000);
 
       // 3 世代目は keep=2 のため作られない
       expect(existsSync(`${log}.3`)).toBe(false);
@@ -391,14 +379,14 @@ setInterval(() => {}, 1 << 30);
         detached: true,
       });
       leader.unref();
-      await waitFor(() => existsSync(resolve(tmp.path, "orphan.pid")));
+      await waitUntil(() => existsSync(resolve(tmp.path, "orphan.pid")), 15000);
       const orphanPid = Number(
         readFileSync(resolve(tmp.path, "orphan.pid"), "utf-8"),
       );
       const leaderPid = leader.pid as number;
 
       // リーダーの終了を待ってから、その PID の状態ファイルを置いて stop させる
-      expect(await waitFor(() => !isAlive(leaderPid))).toBe(true);
+      await waitUntil(() => !isAlive(leaderPid), 15000);
       writeRecord(
         tmp.path,
         createRecord({
@@ -415,7 +403,7 @@ setInterval(() => {}, 1 << 30);
 
       expect(result.status).toBe("not-running");
       // リーダーが死んでいても残った孫プロセスは停止される
-      expect(await waitFor(() => !isAlive(orphanPid))).toBe(true);
+      await waitUntil(() => !isAlive(orphanPid), 15000);
       expect(readRecord(tmp.path, "leaky")).toBeNull();
     },
     TIMEOUT_MS,
@@ -431,10 +419,11 @@ setInterval(() => {}, 1 << 30);
       const record = readRecord(tmp.path, "serve");
       if (!record) throw new Error("デーモンが起動していません");
 
-      await waitFor(
+      await waitUntil(
         () =>
           existsSync(logFile(tmp.path, "serve")) &&
           readFileSync(logFile(tmp.path, "serve"), "utf-8").includes("serving"),
+        15000,
       );
 
       // follow を起動してから、デーモンのログへ新しい行が追記されるのを待つ
@@ -452,18 +441,18 @@ setInterval(() => {}, 1 << 30);
       })();
 
       // follow 開始後に追記された行が流れてくること
-      await waitFor(() => chunks.length > 0, 5000);
+      await waitUntil(() => chunks.length > 0, 5000);
       appendFileSync(logFile(tmp.path, "serve"), "APPENDED-AFTER-FOLLOW\n");
-      const streamed = await waitFor(
-        () => chunks.join("").includes("APPENDED-AFTER-FOLLOW"),
-        8000,
-      );
-
-      follow.kill();
-      await reader.catch(() => undefined);
-      await runCli(tmp.path, ["stop", "serve"]);
-
-      expect(streamed).toBe(true);
+      try {
+        await waitUntil(
+          () => chunks.join("").includes("APPENDED-AFTER-FOLLOW"),
+          8000,
+        );
+      } finally {
+        follow.kill();
+        await reader.catch(() => undefined);
+        await runCli(tmp.path, ["stop", "serve"]);
+      }
     },
     TIMEOUT_MS,
   );

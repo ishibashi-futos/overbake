@@ -1,4 +1,4 @@
-import type { ComposeStep, RunEachStep, TaskDefinition } from "../types.ts";
+import type { RunEachStep, TaskDefinition } from "../types.ts";
 
 // `:` などの特殊文字を含む名前を mermaid のノード ID として安全にする
 function mermaidNode(name: string): string {
@@ -11,9 +11,8 @@ function dotQuote(name: string): string {
   return `"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-// task.each / task.compose の工程記述からエッジ始点となるノード名を取り出す。
-// 構造が同形なのでどちらの step 型にも適用できる。
-function stepNode(step: RunEachStep | ComposeStep): string {
+// task.each / task.cron の工程記述からエッジ始点となるノード名を取り出す
+function stepNode(step: RunEachStep): string {
   return step.kind === "task" ? step.name : step.label;
 }
 
@@ -22,7 +21,10 @@ interface Edge {
   to: string;
 }
 
-// 各タスクの「自分に向かう辺」（deps、task.each、task.compose、task.cron の工程）を重複なく列挙する
+// 各タスクの「自分に向かう辺」を重複なく列挙する:
+// - deps、task.each、task.cron の工程
+// - task.compose: 各ステージの各サービス → compose タスク
+// - task.service: run の由来（source）→ そのサービス自身（fn 由来は辺なし）
 function incomingEdges(tasks: TaskDefinition[]): Edge[] {
   const edges: Edge[] = [];
   const seen = new Set<string>();
@@ -35,10 +37,14 @@ function incomingEdges(tasks: TaskDefinition[]): Edge[] {
   for (const task of tasks) {
     for (const dep of task.options?.deps ?? []) add(dep, task.name);
     for (const step of task.options?.each ?? []) add(stepNode(step), task.name);
-    for (const step of task.options?.compose ?? [])
-      add(stepNode(step), task.name);
     for (const step of task.options?.cron?.steps ?? [])
       add(stepNode(step), task.name);
+    for (const serviceName of task.options?.compose?.flat() ?? [])
+      add(serviceName, task.name);
+
+    const source = task.options?.service?.source;
+    if (source?.kind === "task") add(source.name, task.name);
+    else if (source?.kind === "command") add(source.label, task.name);
   }
   return edges;
 }

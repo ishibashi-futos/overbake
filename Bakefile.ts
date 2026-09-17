@@ -74,19 +74,32 @@ task.each(
   test,
 );
 
-const server1 = task("server1", async ({ cmd }) => {
-  await cmd("bun", ["run", "--hot", "scripts/dev-server.ts"], {
-    env: { PORT: "3000" },
-  });
-});
+// scripts/dev-server.ts は起動時に "Server running at ..." を出力するので、
+// その行を ready の目印にする（ready 未指定だと起動直後に ready 扱いになってしまい、
+// 実際に listen できたかを確認できない）。
+const server1 = task.service(
+  "server1",
+  { ready: { log: "Server running at" } },
+  async ({ cmd }) => {
+    await cmd("bun", ["run", "--hot", "scripts/dev-server.ts"], {
+      env: { PORT: "3000" },
+    });
+  },
+);
 
-const server2 = task("server2", async ({ cmd }) => {
-  await cmd("bun", ["run", "--hot", "./dev-server.ts"], {
-    env: { PORT: "3001" },
-    cwd: "scripts/",
-  });
-});
+const server2 = task.service(
+  "server2",
+  { ready: { log: "Server running at" } },
+  async ({ cmd }) => {
+    await cmd("bun", ["run", "--hot", "./dev-server.ts"], {
+      env: { PORT: "3001" },
+      cwd: "scripts/",
+    });
+  },
+);
 
-task.compose("dev", { desc: "run servers" }, server1, server2);
+// server1 / server2 は互いに依存しない独立したサーバなので、1 つのグループにまとめて同時起動する
+// （配列で束ねなかった場合は「起動順」として順に起動されてしまう）。
+task.compose("dev", { desc: "run servers" }, [server1, server2]);
 
 task.default(build);

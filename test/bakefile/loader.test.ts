@@ -110,6 +110,58 @@ task.each("sanity", { desc: "まとめて検証" }, a, b);`,
     ]);
   });
 
+  test("task.service(name, run) でサービスを登録できる（引数 1 個）", async () => {
+    const bakefilePath = resolve(tmp.path, "test-bakefile.ts");
+    writeFileSync(bakefilePath, `task.service("worker", async () => {});`);
+
+    const registry = new TaskRegistry();
+    await loadBakefile(bakefilePath, registry);
+
+    const worker = registry.get("worker");
+    expect(worker).toBeDefined();
+    expect(worker?.options?.service?.source).toEqual({ kind: "fn" });
+  });
+
+  test("task.service(name, options, run) でサービスを登録できる（引数 2 個）", async () => {
+    const bakefilePath = resolve(tmp.path, "test-bakefile.ts");
+    writeFileSync(
+      bakefilePath,
+      `task.service(
+        "db",
+        { desc: "PostgreSQL", ready: { port: 5432 }, retry: { attempts: 3 } },
+        ["docker", ["compose", "up", "postgres"]],
+      );`,
+    );
+
+    const registry = new TaskRegistry();
+    await loadBakefile(bakefilePath, registry);
+
+    const db = registry.get("db");
+    expect(db?.options?.desc).toBe("PostgreSQL");
+    expect(db?.options?.service?.ready).toEqual({ port: 5432 });
+    expect(db?.options?.service?.retry).toEqual({ attempts: 3 });
+    expect(db?.options?.service?.source).toEqual({
+      kind: "command",
+      label: "docker compose up postgres",
+    });
+  });
+
+  test("restores globalThis.task.service after successful import", async () => {
+    const bakefilePath = resolve(tmp.path, "test-bakefile.ts");
+    writeFileSync(bakefilePath, 'export default "test";');
+
+    const registry = new TaskRegistry();
+    const serviceBeforeLoad = (
+      globalThis as unknown as { task: { service: unknown } }
+    ).task?.service;
+
+    await loadBakefile(bakefilePath, registry);
+
+    expect(
+      (globalThis as unknown as { task: { service: unknown } }).task?.service,
+    ).toBe(serviceBeforeLoad);
+  });
+
   test("restores globalThis.task.default after successful import", async () => {
     const bakefilePath = resolve(tmp.path, "test-bakefile.ts");
     writeFileSync(bakefilePath, 'export default "test";');

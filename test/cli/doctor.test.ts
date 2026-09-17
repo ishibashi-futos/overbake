@@ -180,7 +180,7 @@ task.cron("never", { schedule: "0 0 30 2 *" }, job);`,
     writeFileSync(".gitignore", ".overbake/\n");
     writeFileSync(
       "Bakefile.ts",
-      `const risky = task("risky", { confirm: "本当に?" }, () => {});
+      `const risky = task.service("risky", { confirm: "本当に?" }, ["echo", ["hi"]]);
 task.compose("dev", risky);`,
     );
 
@@ -191,6 +191,105 @@ task.compose("dev", risky);`,
     expect(output).toContain("WARN");
     expect(output).toContain("confirm");
     expect(output).toContain("risky");
+  });
+
+  test("サービス設定が不正（retry.attempts が負数）だと ERROR として検出し exit code 2 を返す", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task.service("db", { retry: { attempts: -1 } }, ["echo", ["hi"]]);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("サービス 'db'");
+    expect(output).toContain("retry.attempts");
+  });
+
+  test("サービス設定が不正（ready の probe を 2 つ指定）だと ERROR として検出する", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `task.service("api", { ready: { port: 3000, log: "up" } }, ["echo", ["hi"]]);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("サービス 'api'");
+    expect(output).toContain(
+      "ready は log / port / check のいずれか 1 つだけを指定してください",
+    );
+  });
+
+  test("compose に通常タスクを渡すと ERROR として検出する", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `const plain = task("plain", () => {});
+task.compose("dev", plain);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("compose 'dev'");
+    expect(output).toContain("はサービスではありません");
+  });
+
+  test("compose に空グループを渡すと ERROR として検出する", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `const db = task.service("db", ["echo", ["hi"]]);
+task.compose("dev", db, []);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    expect(output).toContain("ERROR");
+    expect(output).toContain("compose 'dev'");
+    expect(output).toContain("空のグループ");
+  });
+
+  test("不正なサービスを含む compose は同じ原因を二重に報告しない", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync(
+      "Bakefile.ts",
+      `const db = task.service("db", { retry: { attempts: -1 } }, ["echo", ["hi"]]);
+task.compose("dev", db);`,
+    );
+
+    const code = await runDoctor();
+
+    expect(code).toBe(2);
+    const output = logs.join("\n");
+    const dbErrorCount = output
+      .split("\n")
+      .filter((line) => line.includes("ERROR") && line.includes("db")).length;
+    expect(dbErrorCount).toBe(1);
+    expect(output).not.toContain("compose 'dev'");
+  });
+
+  test("docs は予約語なので同名タスクは WARN", async () => {
+    writeFileSync(".gitignore", ".overbake/\n");
+    writeFileSync("Bakefile.ts", `task("docs", () => {});`);
+
+    const code = await runDoctor();
+
+    expect(code).toBe(0);
+    const output = logs.join("\n");
+    expect(output).toContain("WARN");
+    expect(output).toContain("docs");
   });
 
   test("サブコマンドと同名のタスクは WARN", async () => {

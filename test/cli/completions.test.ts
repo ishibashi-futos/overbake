@@ -40,6 +40,11 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
     expect(script).toContain("logs:");
   });
 
+  test("generateZshCompletion は docs サブコマンドを含む", () => {
+    const script = generateZshCompletion();
+    expect(script).toContain("docs:");
+  });
+
   test("generateZshCompletion は --no-summary / --graph を含む", () => {
     const script = generateZshCompletion();
     expect(script).toContain("--no-summary");
@@ -81,6 +86,11 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
     expect(script).toContain("ps");
     expect(script).toContain("stop");
     expect(script).toContain("logs");
+  });
+
+  test("generateBashCompletion は docs サブコマンドを含む", () => {
+    const script = generateBashCompletion();
+    expect(script).toContain("docs");
   });
 
   test("generateBashCompletion は --no-summary / --graph を含む", () => {
@@ -138,6 +148,18 @@ describe("シェル補完 (#16) - 補完スクリプト生成", () => {
         expect(line).toContain("stop");
         expect(line).toContain("logs");
       }
+    }
+  });
+
+  test("generateFishCompletion は docs サブコマンドを含み、全箇所の除外リストにも入る", () => {
+    const script = generateFishCompletion();
+    expect(script).toContain("-a 'docs'");
+    const lines = script
+      .split("\n")
+      .filter((l) => l.includes("not __fish_seen_subcommand_from"));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line).toContain("docs");
     }
   });
 

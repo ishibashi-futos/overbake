@@ -1,12 +1,14 @@
 import type {
   ComposeItem,
   RunEachItem,
+  ServiceRun,
   Task,
   TaskComposeOptions,
   TaskCronOptions,
   TaskEachOptions,
   TaskFunction,
   TaskOptions,
+  TaskServiceOptions,
 } from "../types.ts";
 import type { TaskRegistry } from "./registry.ts";
 
@@ -18,6 +20,10 @@ declare global {
   ) => Task) & {
     default: (task: Task) => void;
     each: (name: string, ...args: (TaskEachOptions | RunEachItem)[]) => Task;
+    service: {
+      (name: string, run: ServiceRun): Task;
+      (name: string, options: TaskServiceOptions, run: ServiceRun): Task;
+    };
     compose: (
       name: string,
       ...args: (TaskComposeOptions | ComposeItem)[]
@@ -48,6 +54,15 @@ export async function loadBakefile(
     };
 
     taskFn.each = (name, ...args) => registry.registerEach(name, ...args);
+
+    taskFn.service = ((
+      name: string,
+      ...args: [ServiceRun] | [TaskServiceOptions, ServiceRun]
+    ) =>
+      registry.registerService(
+        name,
+        ...args,
+      )) as typeof globalThis.task.service;
 
     taskFn.compose = (name, ...args) => registry.registerCompose(name, ...args);
 

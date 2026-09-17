@@ -9,9 +9,12 @@ Bun 製の TypeScript タスクランナー。`Bakefile.ts` で型補完が効�
 - **依存関係解決 (DAG)**: `deps` で他のタスクを指定すると自動で順序を決定
 - **TaskContext API**: ファイル操作、コマンド実行などのユーティリティを提供
 - **まとめて実行 (`ctx.runEach` / `task.each`)**: 複数タスク・コマンドを順に実行し、出力を抑えて失敗だけ表示。`task.each` で宣言すると工程が `--graph` 出力にも現れる（[詳細](docs/features/run-each.md)）
-- **並列サービス起動 (`task.compose`)**: 複数フォルダ（ワークスペース）の長時間サービスを並列起動。`[name]` prefix 付きストリーミング出力、1 つでも落ちたら他に SIGTERM、Ctrl+C で全停止
+- **長時間サービス (`task.service`)**: DB / dev サーバ / worker などを宣言的に定義。ready 判定（log / port / check）と失敗時の指数バックオフ再起動を持つ（[詳細](docs/features/service.md)）
+- **起動順付き複数サービス起動 (`task.compose`)**: `task.service` を起動順（引数の並び）とグループ（配列 = 同時起動）で束ねる。前のステージが全て ready になってから次を起動し、1 つでも再起動を使い切ったら他に SIGTERM → grace → SIGKILL、Ctrl+C で全停止
 - **デーモンモード (`-d`)**: タスクをバックグラウンドで常駐起動。ログは `.overbake/logs/<task>.log` へ。`bake ps` / `bake logs` / `bake stop` で管理
-- **定期実行 (`task.cron`)**: cron 式でジョブを定義。前景でも `-d` でデーモンとしても動かせ、`task.compose` の要素にもできる
+- **定期実行 (`task.cron`)**: cron 式でジョブを定義。前景でも `-d` でデーモンとしても動かせ、`task.service` で包めば `task.compose` の要素にもできる
+- **AI エージェント向けガイド (`bake docs`)**: エージェントが `Bakefile.ts` を書く・`bake` を使うときの手順とハマりどころをまとめた `docs/SKILL.md` をそのまま標準出力へ出力
+- **ターミナルタイトル表示**: TTY 実行時はタイトルバーに `🍞 overbake - <コマンド名>`（`bake` 単体実行時はコマンド名なしで `🍞 overbake`）を表示。終了時、push/pop 対応端末では元のタイトルに戻り、非対応端末（Windows Terminal / Ghostty など）では端末既定のタイトルに戻る
 
 ## インストールと更新
 
@@ -100,6 +103,9 @@ bake logs dev -n 200 -f
 bake stop dev
 bake stop --all
 
+# AI エージェント向けガイド（docs/SKILL.md）を標準出力へ出力
+bake docs
+
 # ネームスペース（: 区切り）タスクをワイルドカードで一括実行
 # シェルの glob 展開と衝突するため、必ずクォートで囲んでください
 bake "build:*"         # build: で始まるタスクを全部実行
@@ -131,6 +137,13 @@ bake update --force  # 同一/新しいバージョンでも再インストー�
 bake --version
 bake -v
 ```
+
+TTY で実行すると、ターミナルのタイトルバーに `🍞 overbake - <コマンド名>`（例: `bake dev` なら
+`🍞 overbake - dev`）を表示します。`bake` をタスク名なし（デフォルトタスク）で実行した場合は
+コマンド名を付けず `🍞 overbake` とだけ表示します。終了時、push/pop に対応した端末では元のタイトルに
+戻り、非対応の端末（Windows Terminal / Ghostty など）では端末既定のタイトルに戻ります（Ctrl+C などの
+シグナルで強制終了した場合は復元されないことがあります）。`bake list` / `bake --help` のような
+出力専用コマンドや、パイプ・リダイレクトで非 TTY になっている場合はタイトルを変更しません。
 
 ### Bakefile.ts の書き方
 
@@ -168,15 +181,18 @@ task.each(
   ["bun", ["test"]],
 );
 
-// 複数フォルダのサービスを並列起動（dev サーバの compose）。
-// 1 つでも exit すると他に SIGTERM が飛び、Ctrl+C で全停止する。
-const ui = task("ui", async ({ cmd }) => {
-  await cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/ui" });
-});
-const api = task("api", async ({ cmd }) => {
-  await cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/api" });
-});
-task.compose("dev", { desc: "全サービス並列起動" }, ui, api);
+// 長時間サービスを起動順付きで束ねる（db → api の順で起動する compose）。
+// db は ready（TCP 接続確認）になるまで、api は起動しない。
+// retry を使い切って落ちたサービスが出たら他に SIGTERM が飛び、Ctrl+C でも全停止する。
+const db = task.service("db", { ready: { port: 5432 } }, ["docker", ["compose", "up", "postgres"]]);
+const api = task.service(
+  "api",
+  { ready: { log: /listening on/ }, retry: { attempts: 5 } },
+  async ({ cmd }) => {
+    await cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/api" });
+  },
+);
+task.compose("dev", { desc: "db → api の順で起動" }, db, api);
 
 // 定期実行。工程は task.each と同じ書き方で、schedule に従って繰り返される。
 // bake nightly で前景実行、bake -d nightly でデーモン実行。
@@ -185,9 +201,15 @@ const backup = task("backup", async ({ cmd }) => {
 });
 task.cron("nightly", { schedule: "0 3 * * *", desc: "毎晩バックアップ" }, backup);
 
-// cron タスクは compose の要素にもできる（dev サーバと定期ジョブを一緒に起動する）
+// cron タスクは Task であって Service ではないため、compose に入れるには task.service で包む
+// （タスク名は一意である必要があるため、包む側には別名を付ける）。
 const poller = task.cron("poll", { schedule: "@every 30s" }, backup);
-task.compose("dev-all", { desc: "サービスと定期ジョブをまとめて起動" }, ui, api, poller);
+task.compose(
+  "dev-all",
+  { desc: "サービスと定期ジョブをまとめて起動" },
+  db,
+  [api, task.service("poller", poller)],
+);
 ```
 
 ### TaskContext API
@@ -199,6 +221,7 @@ task.compose("dev-all", { desc: "サービスと定期ジョブをまとめて�
 | `ctx.name` | タスク名 |
 | `ctx.root` | プロジェクトルートの絶対パス |
 | `ctx.cwd` | 現在の作業ディレクトリ |
+| `ctx.signal` | `AbortSignal`。`task.compose` / `task.service` 配下で停止・再起動するとき abort される。`ctx.cmd` は自動でこれに従う |
 | `ctx.cmd(command, args, options)` | コマンド実行。失敗時は例外をスロー |
 | `ctx.rm(path, options)` | ファイル・ディレクトリ削除（`recursive`, `force` オプション） |
 | `ctx.exists(path)` | ファイル・ディレクトリが存在するかチェック |
@@ -213,7 +236,8 @@ task.compose("dev-all", { desc: "サービスと定期ジョブをまとめて�
 | `task(name, opts?, fn?)` | 通常のタスク。`fn` 省略でメタタスク |
 | `task.default(task)` | `bake` 単体で実行されるデフォルトタスクを指定 |
 | `task.each(name, opts?, ...items)` | 複数工程を順に実行（失敗した工程の出力だけ表示） |
-| `task.compose(name, opts?, ...services)` | 複数の長時間サービスを並列起動（fail-fast・SIGINT 伝播） |
+| `task.service(name, opts?, run)` | 長時間サービスを宣言（ready 判定・失敗時の指数バックオフ再起動。[詳細](docs/features/service.md)） |
+| `task.compose(name, opts?, ...items)` | `task.service` を起動順（引数の並び）・グループ（配列 = 同時起動）で束ねる。fail-fast・SIGINT 伝播 |
 | `task.cron(name, { schedule, ...opts }, ...items)` | 工程列をスケジュールに従って繰り返し実行 |
 
 ### タスクオプション
@@ -229,6 +253,31 @@ task.compose("dev-all", { desc: "サービスと定期ジョブをまとめて�
 | `platforms` | 実行対象 OS（`NodeJS.Platform` 配列）。指定なしは全 OS で実行。例: `["darwin", "linux"]`。対象外 OS では自動的にスキップされる |
 | `before` | タスク実行前のフック |
 | `after` | タスク実行後のフック |
+
+## サービスと起動順 (`task.service` / `task.compose`)
+
+`task.service` は ready 判定（`log` / `port` / `check`）と失敗時の指数バックオフ再起動を持つ長時間
+サービスを宣言します。`task.compose` は引数の並びを起動順（ステージ）、配列を同時起動グループとして
+サービスを束ね、**前のステージの全サービスが ready になってから次のステージを起動**します。
+
+```typescript
+const db = task.service("db", { ready: { port: 5432, timeoutMs: 120_000 } }, [
+  "docker",
+  ["compose", "up", "postgres"],
+]);
+const api = task.service(
+  "api",
+  { ready: { log: /listening on/ }, failOn: "EADDRINUSE", retry: { attempts: 5 } },
+  async ({ cmd }) => cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/api" }),
+);
+
+// 起動順: db → api（db が ready になってから api を起動）
+task.compose("dev", { desc: "開発環境" }, db, api);
+```
+
+再起動を使い切ったサービスが 1 つでも出ると、compose 全体を SIGTERM → grace → SIGKILL で停止して
+失敗します。詳しい ready / 失敗条件 / retry の式 / 出力例 / 停止の挙動は
+[docs/features/service.md](docs/features/service.md) を参照してください。
 
 ## 実行サマリー
 
@@ -300,8 +349,8 @@ bake -d dev
 `task.compose` と `-d` を組み合わせると、複数の長時間サービスを 1 つのデーモンとして常駐させられます。各サービスの出力は `[name]` prefix 付きで同じログファイルに集約されます。
 
 ```bash
-bake -d dev          # ui と api をまとめて常駐起動
-bake logs dev -f     # [ui] / [api] prefix 付きのログを追従
+bake -d dev          # db → api の順で常駐起動
+bake logs dev -f     # [db] / [api] prefix 付きのログを追従
 bake stop dev        # 両サービスをまとめて停止
 ```
 
@@ -339,16 +388,36 @@ bake logs nightly  # 実行ログを確認
 
 ### compose との組み合わせ
 
-`task.cron` が返すタスクハンドルは `task.compose` の要素として渡せます。dev サーバと定期ジョブを 1 コマンドで起動・停止できます。
+`task.cron` が返すタスクハンドルは `Task` であって `Service` ではないため、`task.compose` へ直接
+渡すことはできません。`task.service` で包めば渡せます（タスク名は一意である必要があるため、包む側
+には別名を付けます）。dev サーバと定期ジョブを 1 コマンドで起動・停止できます。
 
 ```typescript
-const poller = task.cron("poll", { schedule: "@every 30s" }, refresh);
-task.compose("dev", ui, api, poller);
+const poller = task.cron("poll", { schedule: "@every 30s" }, backup);
+task.compose("dev-all", db, [api, task.service("poller", poller)]);
 ```
 
 ## Bakefile の静的検証 (`bake doctor`)
 
 `bake doctor` は `Bakefile.ts` を読み込むだけで（タスクを実行せずに）設定の健全性を検証します。
 
-- **error**（exit 2）: 未定義の `deps` 参照、循環依存、同名タスクの二重登録、メタタスクなのに `outputs` を持つ矛盾、不正な cron 式
-- **warning**（exit 0）: `inputs` glob の 0 件マッチ、`.gitignore` に `.overbake/` が無い、`compose` / `cron` の工程に `confirm` 付きタスクがある（非 TTY のデーモン実行では応答できないため）、CLI サブコマンドと同名のタスク
+- **error**（exit 2）: 未定義の `deps` 参照、循環依存、同名タスクの二重登録、メタタスクなのに `outputs` を持つ矛盾、不正な cron 式、不正な `task.service` の設定（`ready` / `failOn` / `retry`）、不正な `task.compose` の構成（空のステージ・サービスでない要素・同じサービスの重複指定）
+- **warning**（exit 0）: `inputs` glob の 0 件マッチ、`.gitignore` に `.overbake/` が無い、`compose` / `cron` の工程に `confirm` 付きタスクがある（非 TTY のデーモン実行では応答できないため）、CLI サブコマンドと同名のタスク（`docs` を含む）
+
+`task.service` / `task.compose` は登録時には値を検証しません。検証は実行時と `bake doctor` の両方が
+同じ関数を呼ぶことで一本化されているため、`Bakefile.ts` を編集したら実行前に `bake doctor` を通すことを
+推奨します（詳細は [docs/features/service.md](docs/features/service.md)）。
+
+## AI エージェント向け
+
+`bake docs` は `docs/SKILL.md`（Bakefile.ts を書く・`bake` を使うときの手順とハマりどころをまとめた
+エージェント向けガイド）をそのまま標準出力へ出力します。バイナリに埋め込まれているため、ネットワーク
+アクセスなしで参照できます。
+
+```bash
+bake docs > .claude/skills/overbake/SKILL.md
+```
+
+Claude Code などのエージェントにこのガイドをスキルとして持たせておくと、`Bakefile.ts` を編集する前に
+`bake --help` や `bake doctor` を通す、長時間サービスは `-d` でデーモン化して `bake logs` で確認する、
+といった overbake 固有の作法を毎回説明しなくても踏襲させられます。

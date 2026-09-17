@@ -1,4 +1,5 @@
-import type { TaskDefinition } from "../types.ts";
+import { describePattern, SERVICE_DEFAULTS } from "../service/config.ts";
+import type { ServiceReady, ServiceRetry, TaskDefinition } from "../types.ts";
 
 // platforms / cron の付加情報をタスク名・説明の後ろに付ける文字列を組み立てる。
 // ungrouped / グループ表示の両方から呼ばれる共通ロジック。
@@ -78,6 +79,7 @@ Commands:
   logs <task>            Show the last 50 lines of a daemon log
   logs <task> -n <N>     Show the last N lines of a daemon log
   logs <task> -f         Follow a daemon log
+  docs                   Print the usage guide for AI agents (SKILL.md)
   -v, --version          Print the bake version
 
 Options (for run):
@@ -92,7 +94,33 @@ Options (for run):
   --no-color             Disable colored output
   --yes, -y              Skip confirmation prompts
   -d, --daemon           Run the task as a background daemon (single task only)
+
+AI agents: run 'bake docs' to read the full guide (SKILL.md) before editing Bakefile.ts.
 `;
+}
+
+// service.ready の probe 種別を 1 行に整形する（timeoutMs 指定時のみ末尾に添える）
+function formatReadyLine(ready: ServiceReady): string {
+  const probe =
+    "log" in ready
+      ? `log ${describePattern(ready.log)}`
+      : "port" in ready
+        ? `port ${ready.host ?? SERVICE_DEFAULTS.host}:${ready.port}`
+        : "check";
+  const timeout =
+    ready.timeoutMs !== undefined ? ` (timeout ${ready.timeoutMs}ms)` : "";
+  return `Ready: ${probe}${timeout}`;
+}
+
+// service.retry を 1 行に整形する（delayMs / factor / maxDelayMs は指定されたものだけ添える）
+function formatRetryLine(retry: ServiceRetry): string {
+  const parts: string[] = [];
+  if (retry.delayMs !== undefined) parts.push(`delayMs ${retry.delayMs}ms`);
+  if (retry.factor !== undefined) parts.push(`factor ${retry.factor}`);
+  if (retry.maxDelayMs !== undefined)
+    parts.push(`maxDelayMs ${retry.maxDelayMs}ms`);
+  const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return `Retry: ${retry.attempts} attempts${detail}`;
 }
 
 export function renderTaskHelp(task: TaskDefinition): string {
@@ -121,6 +149,24 @@ export function renderTaskHelp(task: TaskDefinition): string {
 
   if (task.options?.cron) {
     lines.push(`Schedule: ${task.options.cron.schedule}`);
+  }
+
+  const compose = task.options?.compose;
+  if (compose && compose.length > 0) {
+    lines.push(
+      `Services: ${compose.map((stage) => stage.join(", ")).join(" → ")}`,
+    );
+  }
+
+  const service = task.options?.service;
+  if (service?.ready) {
+    lines.push(formatReadyLine(service.ready));
+  }
+  if (service?.failOn !== undefined) {
+    lines.push(`Fail on: ${describePattern(service.failOn)}`);
+  }
+  if (service?.retry) {
+    lines.push(formatRetryLine(service.retry));
   }
 
   return lines.join("\n");

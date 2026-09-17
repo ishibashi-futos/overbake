@@ -129,6 +129,222 @@ describe("renderGlobalHelp - completions / doctor の案内", () => {
   });
 });
 
+describe("renderGlobalHelp - bake docs", () => {
+  test("Commands に docs 行を含む", () => {
+    const output = renderGlobalHelp();
+    expect(output).toContain(
+      "docs                   Print the usage guide for AI agents (SKILL.md)",
+    );
+  });
+
+  test("末尾にエージェント向けの導線として 'bake docs' を案内する", () => {
+    const output = renderGlobalHelp();
+    expect(output).toContain("bake docs");
+    expect(output).toContain("SKILL.md");
+  });
+});
+
+describe("renderTaskHelp - task.compose の Services 行", () => {
+  test("compose があるときのみ Services を表示し、ステージは ' → '、グループ内は ', '", () => {
+    const task = {
+      name: "dev",
+      fn: () => {},
+      options: { compose: [["db"], ["api", "worker"], ["web"]] },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Services: db → api, worker → web");
+  });
+
+  test("compose がないタスクには Services を表示しない", () => {
+    const task = { name: "build", fn: () => {}, options: {} };
+    const output = renderTaskHelp(task);
+    expect(output).not.toContain("Services:");
+  });
+});
+
+describe("renderTaskHelp - task.service の Ready / Fail on / Retry", () => {
+  test("ready.port は host:port 表示（host 省略時は既定値）", () => {
+    const task = {
+      name: "db",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          ready: { port: 5432 },
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Ready: port localhost:5432");
+  });
+
+  test("ready.port に host を指定すればそれを表示する", () => {
+    const task = {
+      name: "db",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          ready: { port: 5432, host: "db.internal" },
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Ready: port db.internal:5432");
+  });
+
+  test("ready.log は describePattern 形式で表示する（文字列は JSON.stringify）", () => {
+    const task = {
+      name: "api",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          ready: { log: "listening" },
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain('Ready: log "listening"');
+  });
+
+  test("ready.log が RegExp なら String(regexp) 形式で表示する", () => {
+    const task = {
+      name: "api",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          ready: { log: /listening on/ },
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Ready: log /listening on/");
+  });
+
+  test("ready.check は 'check' とだけ表示する", () => {
+    const task = {
+      name: "web",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          ready: { check: async () => true },
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Ready: check");
+  });
+
+  test("ready.timeoutMs を指定すると末尾に timeout を添える", () => {
+    const task = {
+      name: "db",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          ready: { port: 5432, timeoutMs: 120_000 },
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Ready: port localhost:5432 (timeout 120000ms)");
+  });
+
+  test("ready 未指定なら Ready 行を表示しない", () => {
+    const task = {
+      name: "worker",
+      fn: () => {},
+      options: {
+        service: { run: () => {}, source: { kind: "fn" as const } },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).not.toContain("Ready:");
+  });
+
+  test("failOn を指定すると Fail on を表示する（describePattern 形式）", () => {
+    const task = {
+      name: "api",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          failOn: "EADDRINUSE",
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain('Fail on: "EADDRINUSE"');
+  });
+
+  test("failOn 未指定なら Fail on 行を表示しない", () => {
+    const task = {
+      name: "api",
+      fn: () => {},
+      options: {
+        service: { run: () => {}, source: { kind: "fn" as const } },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).not.toContain("Fail on:");
+  });
+
+  test("retry を指定すると '<attempts> attempts' を表示する", () => {
+    const task = {
+      name: "api",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          retry: { attempts: 3 },
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Retry: 3 attempts");
+  });
+
+  test("retry の delayMs/factor/maxDelayMs は指定されたものだけ添える", () => {
+    const task = {
+      name: "api",
+      fn: () => {},
+      options: {
+        service: {
+          run: () => {},
+          source: { kind: "fn" as const },
+          retry: { attempts: 5, delayMs: 1000, factor: 2 },
+        },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).toContain("Retry: 5 attempts (delayMs 1000ms, factor 2)");
+    expect(output).not.toContain("maxDelayMs");
+  });
+
+  test("retry 未指定なら Retry 行を表示しない", () => {
+    const task = {
+      name: "api",
+      fn: () => {},
+      options: {
+        service: { run: () => {}, source: { kind: "fn" as const } },
+      },
+    };
+    const output = renderTaskHelp(task);
+    expect(output).not.toContain("Retry:");
+  });
+});
+
 describe("issue #21: renderTaskList グルーピング表示", () => {
   test("`:` を含まないタスクはフラット表示でグループヘッダーなし", () => {
     const tasks = [

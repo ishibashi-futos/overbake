@@ -103,24 +103,15 @@ describe("graph レンダリング", () => {
       name: "dev",
       fn: () => {},
       options: {
-        compose: [
-          { kind: "task" as const, name: "ui" },
-          { kind: "task" as const, name: "api" },
-          { kind: "command" as const, label: "bun run scripts/worker.ts" },
-        ],
+        compose: [["ui"], ["api"]],
       },
     },
   ];
 
-  test("renderMermaid: task.compose のサービスを service --> task の辺として出力する", () => {
+  test("renderMermaid: task.compose の各ステージの各サービスを service --> task の辺として出力する", () => {
     const output = renderMermaid(tasksWithCompose);
     expect(output).toContain("ui --> dev");
     expect(output).toContain("api --> dev");
-    // コマンドタプルはラベルをノードにし、安全にエスケープする
-    expect(output).toContain("--> dev");
-    expect(output).toMatch(
-      /bun_run_scripts_worker_ts\["bun run scripts\/worker\.ts"\] --> dev/,
-    );
     // dev は孤立ノード扱いされない
     expect(output).not.toMatch(/^ {2}dev$/m);
   });
@@ -129,7 +120,21 @@ describe("graph レンダリング", () => {
     const output = renderDot(tasksWithCompose);
     expect(output).toContain('"ui" -> "dev";');
     expect(output).toContain('"api" -> "dev";');
-    expect(output).toContain('"bun run scripts/worker.ts" -> "dev";');
+  });
+
+  test("renderMermaid: 同時起動グループ（1 ステージに複数サービス）も辺として出力する", () => {
+    const tasks = [
+      { name: "api", fn: () => {}, options: {} },
+      { name: "worker", fn: () => {}, options: {} },
+      {
+        name: "dev",
+        fn: () => {},
+        options: { compose: [["api", "worker"]] },
+      },
+    ];
+    const output = renderMermaid(tasks);
+    expect(output).toContain("api --> dev");
+    expect(output).toContain("worker --> dev");
   });
 
   test("deps と compose で同じ辺は一度だけ出力する", () => {
@@ -140,13 +145,69 @@ describe("graph レンダリング", () => {
         fn: () => {},
         options: {
           deps: ["a"],
-          compose: [{ kind: "task" as const, name: "a" }],
+          compose: [["a"]],
         },
       },
     ];
     const output = renderMermaid(tasks);
     const matches = output.match(/a --> b/g) ?? [];
     expect(matches.length).toBe(1);
+  });
+
+  describe("task.service の source", () => {
+    test("source が task なら そのタスク --> サービス の辺を出力する", () => {
+      const tasks = [
+        { name: "poll", fn: () => {}, options: {} },
+        {
+          name: "poller",
+          fn: () => {},
+          options: {
+            service: {
+              run: () => {},
+              source: { kind: "task" as const, name: "poll" },
+            },
+          },
+        },
+      ];
+      const output = renderMermaid(tasks);
+      expect(output).toContain("poll --> poller");
+    });
+
+    test("source が command なら コマンドラベル --> サービス の辺を出力する", () => {
+      const tasks = [
+        {
+          name: "db",
+          fn: () => {},
+          options: {
+            service: {
+              run: () => {},
+              source: {
+                kind: "command" as const,
+                label: "docker compose up postgres",
+              },
+            },
+          },
+        },
+      ];
+      const output = renderMermaid(tasks);
+      expect(output).toMatch(
+        /docker_compose_up_postgres\["docker compose up postgres"\] --> db/,
+      );
+    });
+
+    test("source が fn なら辺を出力しない", () => {
+      const tasks = [
+        {
+          name: "api",
+          fn: () => {},
+          options: {
+            service: { run: () => {}, source: { kind: "fn" as const } },
+          },
+        },
+      ];
+      const output = renderMermaid(tasks);
+      expect(output.split("\n")).toContain("  api");
+    });
   });
 
   test("deps と each で同じ辺は一度だけ出力する", () => {

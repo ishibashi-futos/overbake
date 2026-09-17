@@ -23,10 +23,11 @@ export interface RunEachDeps {
   }) => TaskContext;
   /**
    * 進行状況の出力先。未指定なら stdout へ直接書く。
-   * task.cron や task.compose の配下で動く場合、prefix 付き出力へ流すために差し替える。
+   * task.cron や、task.service に包まれて task.compose 配下で動く場合、
+   * prefix 付き出力へ流すために差し替える。
    */
   write?: (text: string) => void;
-  /** 各工程の ctx へ引き継ぐ中断シグナル（cron が compose 配下で停止されたときの伝播用） */
+  /** 各工程の ctx へ引き継ぐ中断シグナル（task.service に包んだ cron が compose 配下で停止されたときの伝播用） */
   abortSignal?: AbortSignal;
 }
 

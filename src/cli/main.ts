@@ -49,6 +49,7 @@ import {
   renderTaskList,
   renderTaskNotFound,
 } from "../ui/help.ts";
+import { startTerminalTitle, titleLabel } from "../ui/title.ts";
 import { runUpdate } from "../update/update.ts";
 import { BAKE_VERSION } from "../version.ts";
 import { collectWatchPaths, startWatch } from "../watch/watcher.ts";
@@ -58,6 +59,7 @@ import {
   generateFishCompletion,
   generateZshCompletion,
 } from "./completions.ts";
+import { getDocs } from "./docs.ts";
 import { runDoctor } from "./doctor.ts";
 import { CliError } from "./error.ts";
 import { runGlaze } from "./glaze.ts";
@@ -277,6 +279,12 @@ export async function main(args: string[]): Promise<void> {
       return;
     }
 
+    if (command.type === "docs") {
+      // SKILL.md をそのまま出す（改行の付加・除去をしない）
+      process.stdout.write(getDocs());
+      return;
+    }
+
     if (command.type === "doctor") {
       const exitCode = await runDoctor();
       if (exitCode !== 0) {
@@ -448,6 +456,16 @@ export async function main(args: string[]): Promise<void> {
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
+
+  // main() にはターミナルへの副作用（タイトル変更）を持たせない。
+  // main() は test/cli/main.test.ts などから対話端末上でも直接呼ばれるため、
+  // 副作用込みだとタイトルが書き換わり process.once("exit") のリスナも積み上がってしまう。
+  // 実バイナリとして起動されたときだけ、ここで一度だけ配線する。
+  const label = titleLabel(parseArgs(args));
+  if (label !== null) {
+    startTerminalTitle(label);
+  }
+
   (async () => {
     await main(args);
   })();

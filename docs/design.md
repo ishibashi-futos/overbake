@@ -263,8 +263,11 @@ declare function task(name: string, opts: TaskOptions, fn: TaskFn): Task;
 declare function task(name: string, opts: TaskOptions): Task; // メタタスク
 
 declare namespace task {
-  function default(task: Task): void;          // 既定タスク指定
-  function each(name: string, ...items: (TaskEachOptions | RunEachItem)[]): Task; // 後述 5.3
+  export function each(name: string, ...items: (TaskEachOptions | RunEachItem)[]): Task; // 後述 5.3
+
+  // "default" は予約語なので function default(...) とは書けない。defaultTask を default として re-export する
+  function defaultTask(task: Task): void; // 既定タスク指定
+  export { defaultTask as default };
 }
 
 declare const argv: string[]; // `--` 以降の引数
@@ -309,57 +312,149 @@ task("sanity", { desc: "まとめて検証" }, async ({ runEach }) => {
 `ctx.runEach` を呼ぶ形は工程が実行時情報のためグラフには出ない。`deps` は `runEach` と同様ここでは展開せず、
 グラフ上の辺は表示用であって実行順を変えない(`resolveTasks` は `deps` のみを辿る)。
 
-### 5.4 `task.compose()` — 複数フォルダの並列サービス起動
+### 5.4 `task.service()` — 長時間サービス
 
-複数ワークスペースの `bun dev` のような **長時間サービス** を 1 タスクで束ねて並列起動する宣言型 API。
-`task.each` と立て付けは同じ(サービス列を静的に渡し、グラフに辺として乗る)が、実行モデルは別物
-(逐次・短命の `runEach` に対して、`compose` は並列・長時間・fail-fast・SIGINT 伝播を持つ)。
+DB・dev サーバ・worker のような **長時間サービス** を宣言する API。`run` にはタスク関数 /
+コマンドタプル / タスクハンドルのいずれも渡せ、`normalizeServiceRun`（`src/bakefile/registry.ts`）が
+`TaskFunction` + `ServiceSource`（静的記述。graph / help でどこから来た run かを表示するために使う）
+へ正規化する。
 
 ```typescript
-const ui = task("ui", async ({ cmd }) =>
-  cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/ui" }),
+const db = task.service("db", { ready: { port: 5432, timeoutMs: 120_000 } }, [
+  "docker",
+  ["compose", "up", "postgres"],
+]);
+const api = task.service(
+  "api",
+  { ready: { log: /listening on/ }, failOn: "EADDRINUSE", retry: { attempts: 5 } },
+  async ({ cmd }) => cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/api" }),
 );
-const api = task("api", async ({ cmd }) =>
-  cmd("bun", ["run", "--hot", "src/index.ts"], { cwd: "apps/api" }),
-);
-
-task.compose("dev", { desc: "全サービス並列起動" }, ui, api);
 ```
 
-実行モデル:
+`Service` は `Task` を継承したブランド付き型（`Bakefile.d.ts` 上の `unique symbol`。実行時には存在
+しない）で、`task.compose` に渡せるのは `Service` だけという制約を型で表現する。`bake db` のように
+単体でも起動でき、生成された `fn` は `ctx.runCompose([[自分自身]])` を呼ぶ——つまり単体実行も
+compose の「1 ステージ 1 サービス」と全く同じ経路（監督ループ・停止・ready 判定）を通る。挙動を
+2 系統に分けない、という判断。
 
-- 全サービスを並列に起動し、出力は **`[name]` prefix 付きでストリーミング** して stdout へ流す
-  (`NO_COLOR` / 非 TTY 以外では各サービスに固定色を割り当て、ラベルは最大幅にパディングして整列)。
-- **fail-fast が既定**: 1 サービスでも exit したら他に SIGTERM を送り、grace (既定 5 秒) 経過後も
-  生きていれば SIGKILL する。長時間サービスにとっては正常終了 (exit 0) も想定外なので **fail-fast の
-  発火条件に含める**(エラーメッセージは `exited unexpectedly (code 0)` で区別する)。
-- **SIGINT / SIGTERM を受け取ったら全サービスを停止** する。
-  ハンドラは `runCompose` 関数内で install / uninstall するため、compose タスクを抜けたら元に戻る。
-- **task ハンドル渡しの場合**, サービスごとに `AbortController` を用意し、`createTaskContext({ abortSignal })`
-  経由で `ctx.cmd` の起動した grandchild プロセスにも SIGTERM が届く。本体で複数 `cmd` を呼ぶ複雑な task を
-  渡すケースは MVP では非対応とし、各 task は 1 つの長時間サービスを起動するシンプルな形を推奨する。
-- **Ready 検出は MVP では入れない**(将来 `readyPattern` / サービス間依存仕様で拡張する)。
-- **graph 描画**: `task.each` と同様、`compose` 列は `TaskOptions.compose: ComposeStep[]` として焼かれ、
-  `bake <task> --graph` の出力にも `サービス --> タスク` の辺として現れる(コマンドタプルはコマンド
-  文字列ラベルのノードになる)。`deps` は通常 DAG の解決対象だが、`compose` 列は表示用で実行順を変えない
-  (`resolveTasks` は `deps` のみを辿る)。
+監督ループ（`src/runtime/service.ts` の `superviseService`）の要点:
+
+- `ready` は `log` / `port` / `check` のいずれか 1 つ。`log` は行バッファ側で判定、`port` / `check` は
+  `intervalMs` ごとにポーリングする。`ready` 未指定なら `run` 呼び出し直後に ready。
+- 失敗 = ready 前の終了 / ready タイムアウト / ready 後の終了（**`exit 0` も含む**。長時間サービスに
+  とって正常終了は想定外）/ `failOn` に一致する出力行（同じ行が `ready.log` にも一致する場合は
+  `failOn` を優先）。
+- 失敗すると `retry.attempts` 回まで指数バックオフで再起動する:
+  `待機(n) = min(delayMs × factor^(n-1), maxDelayMs)`。**`attempts` はサービスの生存期間全体で数え、
+  ready になってもリセットしない。** 「起動から通算で何回まで再起動を許すか」という制約であり、
+  「安定稼働した実績」を評価してカウンタをリセットする仕組みは意図的に持たない（実装が単純になり、
+  無限リトライで気づかず張り付き続ける事故も防げる）。
+- 再起動を使い切ると `ServiceFailedError`（`service` / `reason` / `retries` を保持）で `done` を
+  reject する。
+- 設定値（`ready` / `failOn` / `retry`）は **登録時には検証しない**。`resolveServiceConfig`
+  （`src/service/config.ts`）が実行時（監督ループ起動前）と `bake doctor` の両方から呼ばれる唯一の
+  検証点で、`task.cron` の `parseSchedule` と同じ「検証ロジックを二重化しない」方針に従う。
+
+`ctx.cmd` は `abortSignal`（compose / service 側が渡す `AbortController`）の abort で `SIGTERM` を送り、
+`killGraceMs`（既定 `KILL_GRACE_MS = 5000`）経過しても終了していなければ `SIGKILL` する。この
+エスカレーションを `ctx.cmd` 側に持たせたことで、`run` がタスク関数・コマンドタプル・タスクハンドルの
+どれであっても停止経路が 1 つに揃う（コマンドタプル・タスクハンドルは内部で `ctx.cmd` を呼ぶだけの
+薄いラップなので、自動的に同じ経路に乗る）。プロセス内でサーバを起動するタスク関数（`Bun.serve` 等）
+だけは `ctx.cmd` を経由しないため、`TaskContext.signal` を公開し、その abort を待ってから `return`
+することを利用者に委ねる。
+
+### 5.5 `task.compose()` — 起動順付きでサービスを束ねる
+
+複数の `task.service` を **起動順（ステージ）** と **同時起動（グループ）** で束ねる宣言型 API。
+
+```typescript
+const worker = task.service("worker", ["bun", ["run", "worker.ts"]]);
+const web = task.service("web", { ready: { check: async () => (await fetch("http://localhost:5173")).ok } }, [
+  "bun",
+  ["run", "dev"],
+]);
+
+// 起動順: db → (api と worker を同時) → web
+task.compose("dev", { desc: "開発環境" }, db, [api, worker], web);
+```
+
+- **引数の並び = 起動順**: `task.compose(name, opts?, ...items)` の各 `items` はサービス（1 要素の
+  ステージ）または配列（同時起動グループ）で、渡した順にステージとして起動する。素朴な「全部並列」で
+  はなく起動順を持たせたのは、DB → API → Web のような依存が現実のワークロードでは大半を占め、
+  順序を表現できないと利用者が `ready` を自前でポーリングする羽目になるため。配列で「同時に起動して
+  よい集合」を明示できるようにし、無用な直列化（起動時間の悪化）を避ける。
+- **前のステージの全サービスが ready になってから次のステージを起動する**。ステージ内は並列に起動し、
+  出力は **`[name]` prefix 付きでストリーミング**（`NO_COLOR` / 非 TTY 以外では固定色、ラベルは
+  全ステージ横断の最大幅にパディング）。
+- **fail-fast**: いずれかのサービスが再起動を使い切って失敗すると、起動済みの全サービスへ `SIGTERM` →
+  `graceMs`（既定 `KILL_GRACE_MS`）後 `SIGKILL` の順で停止し、`compose failed: <ServiceFailedError.message>`
+  で失敗する。まだ起動していない後続ステージは起動しない。
+- **SIGINT / SIGTERM を受け取ったら同じ手順で全サービスを停止するが、こちらは正常終了**（例外を投げ
+  ない）。ハンドラは `runCompose` 関数内で install / uninstall するため、compose タスクを抜けたら
+  元に戻る。停止直後に子プロセスの終了が「失敗」として先に届いてしまう競合と、その猶予については
+  次項参照。
+- **検証（`resolveComposeStages`）は登録時ではなく実行時と `bake doctor`**: 空のステージ・サービス
+  でない要素・同じサービスの重複指定を検出し、不正なら `compose '<taskName>': <詳細>` で throw する
+  （シグナルハンドラ登録より前なので、何も起動しない）。`task.service` と同じ「登録時に検証しない」
+  方針に揃えている。
+- **graph 描画**: `compose` 列は `TaskOptions.compose: string[][]`（ステージごとのサービス名）として
+  焼かれ、`bake <task> --graph` の出力にも `サービス --> タスク` の辺として現れる。`service.source` が
+  `task` / `command` の場合は、その由来からサービス自身への辺も追加される（`fn` の場合は辺なし）。
+  `deps` は通常 DAG の解決対象だが、`compose` 列は表示用で実行順を変えない。
 - **`ctx.compose` は提供しない**(公開 API は宣言形 `task.compose` のみ、API 表面を最小化する方針)。
-  内部実装としては `TaskContext.runCompose` が存在するが、`Bakefile.d.ts` には載せず、ユーザーは
-  `task.compose` 経由でのみ並列サービスを起動する。
+  内部実装としては `TaskContext.runCompose(stages)` が存在するが、`Bakefile.d.ts` には載せず、ユーザーは
+  `task.compose` / `task.service` 経由でのみ使用する。
+- **ネストした compose にも停止が伝播する**: `task.service` の `run` が自身の中で `ctx.runCompose(...)`
+  を呼ぶ場合（`task.service` で包んだ compose を、さらに外側の compose や `bake stop` から止める構成）、
+  外側からの停止要求は `runCompose` に渡した `abortSignal` の abort を通じて内側の compose にも伝わり、
+  `SIGINT` / `SIGTERM` と同じ「正常停止」として扱われる（開始時点で既に abort 済みならステージを 1 つも
+  起動しない）。以前はこの `abortSignal` が内側の `runCompose` まで配線されておらず、ネストした compose
+  が外側の停止要求を無視して起動し続ける不具合があった。
+
+#### 停止の競合と猶予（`FAILURE_SETTLE_MS`）
+
+Ctrl+C や `bake stop` は（§5.7 の通り）プロセスグループ全体へ `SIGINT` / `SIGTERM` を送る。この単一の
+シグナルは bake 自身と、`ctx.cmd` が起動したサービスの子プロセスの両方に同時に届きうるため、子プロセス
+が bake 自身の `runCompose` のシグナルハンドラ（`onSignal` → 各 `handle.stop()`）より先に、あるいはそれ
+と競合するタイミングで終了することがある。監督ループ（`superviseService`）がこの終了を素朴に検知すると
+「失敗」と判定してしまい、実際にはユーザーが望んだ停止なのに `compose failed`（exit 1）になってしまう。
+
+これを避けるため、`superviseService` は attempt が失敗で settle してから確定（`failed:` 出力・
+retry/`ServiceFailedError`）するまでに `FAILURE_SETTLE_MS`（既定 `100`ms、`src/runtime/service.ts` で
+定義）の猶予を置く。猶予の間に停止要求（`handle.stop()`）が届けば、その失敗は確定させず正常終了として
+扱う（`failed:` 行も出さない）。副作用として、この競合とは無関係な通常の失敗確定も最短で
+`FAILURE_SETTLE_MS` 分だけ遅れる。
+
+検討した代替案とその却下理由:
+
+- **サービスの子プロセスを別プロセスグループで起動する**: 起動時に `detached: true` でグループを分ければ、
+  ターミナルの Ctrl+C（プロセスグループへの `SIGINT`）が子プロセスへ直接は届かなくなり、レース自体が
+  起きなくなる。しかし却下した。理由は 2 つ: (1) `bake stop` はデーモンのプロセスグループへ `SIGKILL`
+  を送って強制停止する経路を持つ（§5.7）。子が別グループにいると、この `SIGKILL` が届かず取り残されて
+  しまう。(2) Windows にはプロセスグループへのシグナルが無いため、`detached: true` は新しいコンソール
+  （ウィンドウ）を開く扱いになり、サービスの出力が bake 自身のターミナルから切り離されてしまう。
+- **シグナルによる終了だけを「正常停止」とみなす（exit code は見ない）**: 子プロセスが `SIGTERM` /
+  `SIGKILL` で終了した場合だけ停止として扱い、`exit 0` は常に失敗と判定すれば猶予は要らなくなる。しかし
+  却下した。`SIGINT` を自前でハンドルして後片付けしてから `exit 0` で終わる dev サーバ（多くの Node/Bun
+  製サーバがこの作法）は、正常な停止であっても「シグナルによる終了」ではなく `exit 0` として観測される
+  ため、この判定では吸収できない。
+
+`FAILURE_SETTLE_MS` はこの 2 案の欠点を避けつつ、シグナルの到達順序という非決定的な競合を短い時間窓で
+吸収する妥協点として選んだ。
 
 #### `task.each` との使い分け
 
 | 観点 | `task.each` (runEach) | `task.compose` |
 |---|---|---|
 | プロセス | 短命(完了を待つ) | 長時間(明示的に停止するまで動く) |
-| 実行 | 逐次 | 並列 |
+| 実行 | 逐次 | ステージは順に、ステージ内は並列 |
 | 出力 | 工程ごとに buffer、失敗時のみ表示 | prefix 付きストリーミング |
-| 既定の失敗扱い | fail-fast(最初の失敗で残りを止める) | fail-fast(1 つでも exit したら全停止) |
+| 既定の失敗扱い | fail-fast(最初の失敗で残りを止める) | fail-fast(retry を使い切ったサービスが出たら全停止) |
 | 正常 exit の扱い | 成功として次へ | **失敗扱い**(長時間サービスでは想定外) |
 | SIGINT/SIGTERM 伝播 | (短命のため不要) | 全サービスへ SIGTERM、grace 後 SIGKILL |
-| 用途 | typecheck / lint / build / test の連鎖 | dev サーバ・worker など長時間サービスの compose |
+| 用途 | typecheck / lint / build / test の連鎖 | DB・dev サーバ・worker など長時間サービスの起動順付き compose |
 
-### 5.5 `task.cron()` — 定期実行ジョブ
+### 5.6 `task.cron()` — 定期実行ジョブ
 
 スケジュールに従って工程列を繰り返し実行する宣言型 API。工程の書き方は `task.each` と同じで、
 実行モデルだけが違う（1 回きりの逐次実行 → スケジュールに従った繰り返し）。
@@ -387,15 +482,17 @@ task.cron("nightly", { schedule: "0 3 * * *", desc: "毎晩バックアップ" }
 - **次回時刻は実行完了後に計算する**。実行が長引いて次の発火時刻を過ぎた回は自然にスキップされ、
   多重起動しない。
 - **ローカル時刻**で判定する。タイムゾーン指定は MVP では持たない（DST の境界は Date の挙動に従う）。
-- `abortSignal` が abort されるとループを抜ける。これにより `task.compose` の要素として渡した
-  cron タスクが Ctrl+C や fail-fast で正しく停止する。
-- 出力は `ctx` 経由（`write`）に流すため、compose 配下では `[name]` prefix が付く。
+- `abortSignal` が abort されるとループを抜ける。`task.cron` が返すハンドルは `Task` であって
+  `Service` ではないため `task.compose` へ直接は渡せないが、`task.service("別名", cronTask)` で
+  包めば、この abort 伝播により Ctrl+C や fail-fast で正しく停止する。
+- 出力は `ctx` 経由（`write`）に流すため、`task.service` で包んで compose 配下に入れた場合は
+  包んだ側の名前（別名）で `[name]` prefix が付く。
 - **検証は `parseSchedule` に一本化**する。登録時には検証せず、実行時と `bake doctor` の
   両方が同じ関数を呼ぶ（検証ロジックの二重化を避ける）。
 - **graph 描画**: 工程列は `TaskOptions.cron.steps` として焼かれ、`--graph` に `工程 --> タスク` の
   辺として現れる（`task.each` / `task.compose` と同じ扱い）。
 
-### 5.6 デーモンモード（`-d`）
+### 5.7 デーモンモード（`-d`）
 
 `bake -d <task>` でタスクをバックグラウンドプロセスとして起動する。長時間サービス
 （`task.compose`）や定期ジョブ（`task.cron`）を端末から切り離して常駐させるための仕組み。
@@ -477,7 +574,7 @@ fd は `O_APPEND` で開いているため切り詰め後の書き込みは先�
 | `bake logs` は全体を読んでから末尾を切り出す | 巨大ログでメモリを使う | 実装の単純さを優先 |
 | 状態ファイルは PID ベース | PID 再利用で別プロセスを生存と誤認しうる | 起動時刻の照合まではせず、単純さを優先 |
 
-### 5.7 注入される global
+### 5.8 注入される global
 
 | 名前 | 型 | 用途 |
 |---|---|---|
@@ -769,6 +866,7 @@ flowchart TD
 | `bake ps` | 起動中デーモンの一覧 |
 | `bake stop <task>` / `bake stop --all` | デーモンの停止 |
 | `bake logs <task>` | デーモンのログ表示（`-n <行数>` / `-f` 追従） |
+| `bake docs` | AI エージェント向けガイド（`docs/SKILL.md`）をそのまま標準出力へ出力 |
 
 ### 11.2 フラグ
 
@@ -797,6 +895,39 @@ flowchart TD
 
 SIGINT (Ctrl+C) 受信時の終了コードを制御する処理は実装されていない(`grep -rn "SIGINT" src/` の該当箇所は `task.compose` の子プロセス停止処理のみで、CLI 全体の終了コードには関与しない)。
 
+### 11.4 ターミナルタイトル
+
+`src/ui/title.ts` が担当する。配線は `main()` の中ではなく、`src/cli/main.ts` の `import.meta.main`
+ブロック(実バイナリとして起動されたときだけ通る、CLI のエントリポイント)で行う。`parseArgs(args)` の
+結果を `titleLabel(command)` に渡してラベルを決め、`null` でなければ `startTerminalTitle(label)` を呼ぶ。
+
+- **`main()` に置かない理由**: `main()` は `test/cli/main.test.ts` などから対話端末上でも直接呼び出される。
+  `main()` の中でタイトルを書き換えると、テスト実行のたびに実際の端末タイトルが変わり、
+  `process.once("exit", ...)` のリスナも呼び出すたびに積み上がってしまう。エントリポイントに置くことで、
+  `main()` 自体は端末への副作用を持たない純粋な関数のままになり、テストで安全に直接呼べる。
+- **`default` コマンドはラベルを付けない**: `titleLabel` は `command.type === "default"` のとき常に
+  空文字列を返す(`formatTitle("")` → `"🍞 overbake"`)。`default` コマンドは `Command` の時点でどの
+  タスクが実行されるか(`task.default` の指定)を持たず、`parseArgs` 直後というタイミングでは
+  `registry.getDefault()` を引けないため。デフォルトタスク名を後から解決してタイトルに追記する経路は
+  意図的に作っていない(1 プロセスでタイトルを 2 回書き換える経路を避けるため)。
+- **書き込み条件**: `process.stdout.isTTY === true` かつ `process.env.TERM !== "dumb"` のときだけ。
+  デーモンの子プロセスは stdout がログファイルなので、特別扱いせずとも自然に何も書き込まない。
+- **設定**: OSC 0 (`\x1b]0;<title>\x07`)。タイトルは `🍞 overbake`(ラベルなし)または
+  `🍞 overbake - <label>`。ラベルに含まれる C0/C1 制御文字は埋め込み前に除去する。
+- **復元**: 開始時に XTWINOPS のタイトル push (`\x1b[22;0t`) を送ってからタイトルを設定する。
+  終了時は `process` の `exit` イベントで「空タイトル (`\x1b]0;\x07`) → pop (`\x1b[23;0t`)」の順に
+  書き込む(push/pop 対応端末(iTerm2 / kitty / Alacritty / tmux)では push した元のタイトルに戻り、
+  非対応端末(Windows Terminal / Ghostty / WezTerm)では pop が黙って無視されるだけで、空タイトル =
+  端末既定のタイトルに戻る。クリアと pop の順序を逆にすると対応端末で復元直後にタイトルを消してしまう)。
+- **復元のタイミング**: `exit` イベントのみに乗せるベストエフォート。`task.compose` が
+  SIGINT/SIGTERM を自前で処理しているため、ここでシグナルハンドラを追加すると graceful shutdown を
+  壊す。`exit` は「JS の制御を経由してプロセスが終了する」場合(通常の正常終了、`process.exit()`、
+  `task.compose` が SIGINT/SIGTERM を自前でハンドルしたうえでの graceful shutdown)には発火するが、
+  `SIGKILL`(例: フォアグラウンドの `bake` に対する `kill -9`。OS レベルで捕捉不能)のように JS を
+  経由せずプロセスが終わる場合は発火しないため復元されない。`task.compose` を使わない単体タスク実行では
+  `bake` 自身が SIGINT/SIGTERM のハンドラを持たないため、Ctrl+C 時の挙動はランタイムの既定の
+  シグナル処理に委ねられ、`exit` が発火して復元されるかは保証されない。
+
 ---
 
 ## 12. 型補完の仕組み(`Bakefile.d.ts`)
@@ -805,8 +936,11 @@ SIGINT (Ctrl+C) 受信時の終了コードを制御する処理は実装され�
 
 `Bakefile.d.ts` の内容は `src/init/templates.ts` の `BAKEFILE_DTS_TEMPLATE` が単一の真実の源(single source of truth)である。本節はそこから重複してコードを貼らず、宣言される型・関数の要点のみを示す。詳細な型定義は同ファイルを参照すること。
 
-- `Task`: `task()` / `task.each()` / `task.compose()` / `task.cron()` が返すハンドル。`name` を持ち、他の `task.*` 呼び出しの工程として渡せる。
-- `TaskContext`: タスク本体に渡されるコンテキスト。`name` / `root` / `cwd` に加え、`cmd()`（サブプロセス実行）・`rm()`・`exists()`・`resolve()`・`log()`・`runEach()`（複数工程の逐次実行）を提供する。
+- `Task`: `task()` / `task.each()` / `task.compose()` / `task.cron()` / `task.service()` が返すハンドル。`name` を持ち、他の `task.*` 呼び出しの工程として渡せる。
+- `Service`: `task.service()` が返すハンドル。`Task` を継承したブランド付き型（`unique symbol`。実行時には存在しない）で、`task.compose` に渡せるのはこれだけという制約を型で表現する。
+- `ServiceRun`: `task.service()` の `run` に渡せる 3 形式の和 (`TaskFn | RunEachCommand | Task`)。
+- `TaskServiceOptions`: `task.service()` の先頭に置けるオプション (`TaskOptions & { ready?, failOn?, retry? }`)。`ready` は `log` / `port` / `check` のいずれか 1 つ + `timeoutMs` / `intervalMs`、`retry` は `attempts` + `delayMs` / `factor` / `maxDelayMs`。詳細は [docs/features/service.md](features/service.md)。
+- `TaskContext`: タスク本体に渡されるコンテキスト。`name` / `root` / `cwd` に加え、`signal`（`AbortSignal`。`task.compose` / `task.service` 配下で停止・再起動するとき abort される）・`cmd()`（サブプロセス実行。`signal` の abort に自動で従う）・`rm()`・`exists()`・`resolve()`・`log()`・`runEach()`（複数工程の逐次実行）を提供する。
 - `TaskFn`: `(ctx: TaskContext) => void | Promise<void>`。
 - `TaskPlatform`: `platforms` オプションで使える Node.js の `process.platform` 相当の文字列リテラル型。
 - `HookContext`: `before` / `after` フックに渡されるコンテキスト。`after` は `ok` / `durationMs` も受け取る。
@@ -814,10 +948,19 @@ SIGINT (Ctrl+C) 受信時の終了コードを制御する処理は実装され�
 - `RunEachOptions`: `runEach()` や `task.each()` の先頭に置ける `done` / `keepGoing`。
 - `task(name, fn)` / `task(name, opts, fn)` / `task(name, opts)`: 単体タスクを登録する。
 - `task.each(name, ...)`: 複数の工程を逐次実行するタスクを登録する。
-- `task.compose(name, ...)`: 複数の長時間サービスを並列起動するタスクを登録する。
+- `task.service(name, run)` / `task.service(name, opts, run)`: 長時間サービスを登録する。
+- `task.compose(name, ...)`: `task.service` を起動順（引数の並び）とグループ（配列 = 同時起動）で束ねるタスクを登録する。
 - `task.cron(name, options, ...)`: スケジュールに従って工程列を繰り返し実行するタスクを登録する(`options.schedule` は必須)。
 - `task.default(task)`: デフォルトタスクを指定する。
 - `argv`: `readonly string[]`。CLI に渡された `--` 以降の引数。
+
+`bake docs` は `docs/SKILL.md` を正として `src/cli/docs.ts` が
+`import skill from "../../docs/SKILL.md" with { type: "text" };` でテキストとして import し、
+その内容をそのまま stdout へ書き出す。`with { type: "text" }` は Bun のテキスト import アサーション
+（`src/text-imports.d.ts` の `*.md` module 宣言で型を付ける）で、`bun build --compile` でも
+`docs/SKILL.md` の内容がバイナリへ埋め込まれる。ファイル I/O に頼らず（配布先に `docs/` が存在しない
+ため）、かつ `Bakefile.d.ts` と同じく「単一の真実の源をコードに埋め込み、実行時にそのまま返す」設計に
+揃えている。
 
 ### 12.2 なぜこれが動くか
 

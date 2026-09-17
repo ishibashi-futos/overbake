@@ -15,6 +15,7 @@ import { BAKE_VERSION } from "../../src/version.ts";
 import {
   useConsoleCapture,
   useProcessExitMock,
+  useStdoutCapture,
   useTempDir,
 } from "../support/sandbox.ts";
 
@@ -829,6 +830,20 @@ describe("bake doctor - main 統合テスト", () => {
     expect(exitCode()).toBe(2);
     const output = logs.join("\n");
     expect(output).toContain("ERROR");
+  });
+});
+
+// bake docs - main 統合テスト（内容の完全一致・ドリフト検出は test/cli/docs.test.ts）
+describe("bake docs - main 統合テスト", () => {
+  useTempDir("overbake-docs-main", { chdir: true });
+  const exitCode = useProcessExitMock();
+  const { writes } = useStdoutCapture();
+
+  test("main docs は Bakefile.ts が無くてもエラーにならず出力する", async () => {
+    await main(["docs"]);
+
+    expect(writes.join("")).toContain("name: overbake");
+    expect(exitCode()).toBeUndefined();
   });
 });
 

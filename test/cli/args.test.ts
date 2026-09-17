@@ -368,6 +368,14 @@ describe("issue #30: bake doctor - parseArgs", () => {
   });
 });
 
+// bake docs（AI エージェント向けガイドの出力）
+describe("bake docs - parseArgs", () => {
+  test('"docs" を解析すると type=docs になる', () => {
+    const result = parseArgs(["docs"]);
+    expect(result.type).toBe("docs");
+  });
+});
+
 describe("bake glaze - parseArgs", () => {
   test('"glaze" を解析すると type=glaze / filePath なし / check=false', () => {
     const result = parseArgs(["glaze"]);

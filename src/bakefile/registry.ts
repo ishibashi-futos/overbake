@@ -5,18 +5,45 @@ import {
 import { commandLabel, isCommand, isTask } from "../shared/run-each.ts";
 import type {
   ComposeItem,
-  ComposeStep,
   CronDefinition,
   RunEachItem,
   RunEachOptions,
   RunEachStep,
+  ServiceDefinition,
+  ServiceRun,
+  ServiceSource,
   TaskComposeOptions,
   TaskCronOptions,
   TaskDefinition,
   TaskEachOptions,
   TaskFunction,
   TaskOptions,
+  TaskServiceOptions,
 } from "../types.ts";
+
+/**
+ * task.service() の run（関数 / コマンド / タスクハンドル）を
+ * ServiceDefinition.run（常に TaskFunction）と source（静的記述）に正規化する。
+ */
+function normalizeServiceRun(run: ServiceRun): {
+  run: TaskFunction;
+  source: ServiceSource;
+} {
+  if (isCommand(run)) {
+    const [command, args] = run;
+    return {
+      run: (ctx) => ctx.cmd(command, args ?? []),
+      source: { kind: "command", label: commandLabel(run) },
+    };
+  }
+  if (isTask(run)) {
+    return {
+      run: run.fn,
+      source: { kind: "task", name: run.name, desc: run.options?.desc },
+    };
+  }
+  return { run, source: { kind: "fn" } };
+}
 
 export class TaskRegistry {
   private tasks = new Map<string, TaskDefinition>();
@@ -97,9 +124,45 @@ export class TaskRegistry {
   }
 
   /**
-   * task.compose(): 複数の長時間サービスを並列起動するタスクを宣言的に登録する。
-   * サービス列は options.compose に静的記述として保存され（グラフ描画用）、
-   * 生成された fn が ctx.runCompose で並列起動・fail-fast・SIGTERM 伝播を行う。
+   * task.service(): 長時間動くサービスを宣言的に登録する。
+   * 引数は 1 個（run のみ）か 2 個（options, run）かを個数で判定する（型の推測はしない）。
+   * options の ready / failOn / retry は ServiceDefinition へ、残りは通常の TaskOptions へ振り分ける。
+   * run は関数 / コマンド / タスクハンドルのいずれも TaskFunction + source（静的記述）へ正規化する。
+   * 生成された fn は ctx.runCompose([[自分自身]]) で単体起動する（task.compose の 1 ステージ 1 サービスと同じ経路）。
+   * 設定値（ready/failOn/retry）の検証はここでは行わない（cron と同じ方針。検証は実行時と doctor）。
+   */
+  registerService(
+    name: string,
+    ...args: [ServiceRun] | [TaskServiceOptions, ServiceRun]
+  ): TaskDefinition {
+    const hasOptions = args.length === 2;
+    const options = (hasOptions ? args[0] : {}) as TaskServiceOptions;
+    const run = (hasOptions ? args[1] : args[0]) as ServiceRun;
+
+    const { ready, failOn, retry, ...taskOptions } = options;
+    const { run: normalizedRun, source } = normalizeServiceRun(run);
+
+    const service: ServiceDefinition = { run: normalizedRun, source };
+    if (ready !== undefined) service.ready = ready;
+    if (failOn !== undefined) service.failOn = failOn;
+    if (retry !== undefined) service.retry = retry;
+
+    let definition: TaskDefinition;
+    const fn: TaskFunction = async (ctx) => {
+      await ctx.runCompose([[definition]]);
+    };
+
+    definition = this.register(name, { ...taskOptions, service }, fn);
+    return definition;
+  }
+
+  /**
+   * task.compose(): 複数のサービスを起動順に従って束ねるタスクを宣言的に登録する。
+   * 引数は先頭がオプション（配列でもタスクハンドルでもない）か否かで判定する。
+   * 以降の各要素はタスクハンドル（1 要素のステージ）または配列（同時起動するグループ）で、
+   * 並びがそのままステージ順になる。options.compose にはステージごとのサービス名（string[][]）を
+   * 静的記述として保存し（グラフ描画・help 用）、生成された fn が ctx.runCompose(stages) で実行する。
+   * 要素がサービスかどうかの検証はここでは行わない（検証は実行時と doctor）。
    */
   registerCompose(
     name: string,
@@ -108,19 +171,21 @@ export class TaskRegistry {
     let taskOptions: TaskComposeOptions = {};
     let items = args as ComposeItem[];
     const first = args[0];
-    if (first !== undefined && !isCommand(first) && !isTask(first)) {
+    if (first !== undefined && !Array.isArray(first) && !isTask(first)) {
       taskOptions = first as TaskComposeOptions;
       items = args.slice(1) as ComposeItem[];
     }
 
-    const compose: ComposeStep[] = items.map((item) =>
-      isCommand(item)
-        ? { kind: "command", label: commandLabel(item) }
-        : { kind: "task", name: item.name, desc: item.options?.desc },
+    const stages: TaskDefinition[][] = items.map((item) =>
+      Array.isArray(item) ? [...item] : [item],
+    );
+
+    const compose: string[][] = stages.map((stage) =>
+      stage.map((task) => task.name),
     );
 
     const fn: TaskFunction = async (ctx) => {
-      await ctx.runCompose(items);
+      await ctx.runCompose(stages);
     };
 
     return this.register(name, { ...taskOptions, compose }, fn);

@@ -1,38 +1,18 @@
-import type {
-  ComposeItem,
-  RunEachCommand,
-  RunEachItem,
-  RunEachOptions,
-  Task,
-  TaskComposeOptions,
-  TaskEachOptions,
-} from "../types.ts";
+import type { RunEachCommand, Task } from "../types.ts";
 
 /**
- * runEach / task.each / task.compose の引数が コマンドタプル `[command, args?]` か判定する。
- * オプションオブジェクト・タスクハンドル・コマンドタプルが混在しうる入力に対し型ガードとして働く。
+ * runEach / task.each / task.compose / task.service の引数が
+ * コマンドタプル `[command, args?]` か判定する型ガード。
+ * オプションオブジェクト・タスクハンドル・コマンドタプル・
+ * compose のグループ配列が混在しうる入力に対して働く。
  */
-export function isCommand(
-  x:
-    | RunEachOptions
-    | TaskEachOptions
-    | TaskComposeOptions
-    | RunEachItem
-    | ComposeItem,
-): x is RunEachCommand {
+export function isCommand(x: unknown): x is RunEachCommand {
   return Array.isArray(x);
 }
 
-/** runEach / task.each / task.compose の引数が タスクハンドルか判定する */
-export function isTask(
-  x:
-    | RunEachOptions
-    | TaskEachOptions
-    | TaskComposeOptions
-    | RunEachItem
-    | ComposeItem,
-): x is Task {
-  return !Array.isArray(x) && typeof (x as Task).fn === "function";
+/** runEach / task.each / task.compose / task.service の引数が タスクハンドルか判定する */
+export function isTask(x: unknown): x is Task {
+  return !Array.isArray(x) && typeof (x as Task)?.fn === "function";
 }
 
 /** コマンドタプルを表示用ラベル（`command args...`）に整形する */

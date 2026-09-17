@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { init } from "../../src/init/init.ts";
+import { BAKEFILE_DTS_TEMPLATE } from "../../src/init/templates.ts";
 import { useTempDir } from "../support/sandbox.ts";
 
 describe("init", () => {
@@ -35,6 +36,12 @@ describe("init", () => {
     expect(async () => {
       await init();
     }).toThrow();
+  });
+
+  test("リポジトリルートの Bakefile.d.ts は BAKEFILE_DTS_TEMPLATE と完全一致する（ドリフト防止）", () => {
+    const repoRoot = resolve(import.meta.dir, "../..");
+    const rootDts = readFileSync(resolve(repoRoot, "Bakefile.d.ts"), "utf-8");
+    expect(rootDts).toBe(BAKEFILE_DTS_TEMPLATE);
   });
 
   test("generated Bakefile.ts contains triple-slash reference", async () => {
@@ -90,7 +97,32 @@ describe("init", () => {
 
       writeFileSync(
         tsPath,
-        `/// <reference path="./Bakefile.d.ts" />\n\nconst x = task("x", async () => {\n  await Bun.file("package.json").text();\n});\ntask.default(x);\n`,
+        `/// <reference path="./Bakefile.d.ts" />
+
+const x = task("x", async () => {
+  await Bun.file("package.json").text();
+});
+task.default(x);
+
+// task.service: run の 3 形（コマンド / 関数 / タスクハンドル）
+const db = task.service(
+  "db",
+  { ready: { port: 5432 }, retry: { attempts: 3 } },
+  ["docker", ["compose", "up", "postgres"]],
+);
+const worker = task.service("worker", async ({ cmd }) => {
+  await cmd("bun", ["run", "worker.ts"]);
+});
+const wrapped = task.service("wrapped", x);
+
+// task.compose: ステージ（起動順）とグループ（同時起動）
+task.compose("dev", { desc: "開発環境" }, db, [worker, wrapped]);
+
+// @ts-expect-error 通常タスクは compose に渡せない（Service ではない）
+task.compose("bad-task", x);
+// @ts-expect-error コマンドタプルは compose に渡せない（Service ではない）
+task.compose("bad-command", ["bun", ["run", "x.ts"]]);
+`,
       );
 
       // エディタが Bakefile.ts を割り当てる inferred project を模した設定。

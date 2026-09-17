@@ -54,7 +54,8 @@ export function sleepUntil(until: Date, signal?: AbortSignal): Promise<void> {
  * - 1 回分の実行は runEach と同じ（逐次実行・失敗工程の出力表示）。
  * - **工程が失敗してもスケジューラは止まらない**（cron の慣習）。失敗は報告して次回へ進む。
  * - 次回時刻は「実行完了後」に計算するため、実行が長引いた分の発火は自然にスキップされる（多重起動しない）。
- * - abortSignal が abort されるとループを抜ける（task.compose 配下での停止・Ctrl+C 伝播）。
+ * - abortSignal が abort されるとループを抜ける（task.service で包んで task.compose 配下に
+ *   置いた cron タスクの停止や Ctrl+C 伝播で使用される）。
  */
 export async function runCron(
   deps: RunCronDeps,

@@ -14,6 +14,7 @@ _bake() {
     'ps:起動中のデーモン一覧を表示する'
     'stop:デーモンを停止する'
     'logs:デーモンのログを表示する'
+    'docs:AI エージェント向けガイドを表示する'
   )
 
   tasks=("\${(@f)$(bake __complete tasks 2>/dev/null)}")
@@ -64,7 +65,7 @@ export function generateBashCompletion(): string {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-  local subcommands="init list completions doctor glaze update ps stop logs"
+  local subcommands="init list completions doctor glaze update ps stop logs docs"
   local flags="--help --dry-run --explain --watch --keep-going --quiet --no-summary --verbose --no-color --check --force --yes -y -l --daemon -d --all --follow -f -n --graph --graph=mermaid --graph=dot"
 
   if [[ "$prev" == "completions" ]]; then
@@ -87,15 +88,16 @@ export function generateFishCompletion(): string {
 
 complete -c bake -e
 
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'init' -d 'Bakefile.ts を初期化する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'list' -d 'タスク一覧を表示する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'completions' -d 'シェル補完スクリプトを出力する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'doctor' -d 'Bakefile.ts を検証する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'glaze' -d 'Bakefile.ts を整形する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'update' -d 'bake を最新リリースへ更新する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'ps' -d '起動中のデーモン一覧を表示する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'stop' -d 'デーモンを停止する'
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a 'logs' -d 'デーモンのログを表示する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'init' -d 'Bakefile.ts を初期化する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'list' -d 'タスク一覧を表示する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'completions' -d 'シェル補完スクリプトを出力する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'doctor' -d 'Bakefile.ts を検証する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'glaze' -d 'Bakefile.ts を整形する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'update' -d 'bake を最新リリースへ更新する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'ps' -d '起動中のデーモン一覧を表示する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'stop' -d 'デーモンを停止する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'logs' -d 'デーモンのログを表示する'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a 'docs' -d 'AI エージェント向けガイドを表示する'
 complete -c bake -f -n '__fish_seen_subcommand_from completions' -a 'zsh bash fish'
 
 complete -c bake -l help -d 'ヘルプを表示'
@@ -122,7 +124,7 @@ complete -c bake -l follow -d 'logs: ログを追従表示'
 complete -c bake -s f -d 'logs: ログを追従表示'
 complete -c bake -s n -d 'logs: 表示行数'
 
-complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs' -a '(bake __complete tasks 2>/dev/null)'
+complete -c bake -f -n 'not __fish_seen_subcommand_from init list completions doctor glaze update ps stop logs docs' -a '(bake __complete tasks 2>/dev/null)'
 complete -c bake -f -n '__fish_seen_subcommand_from stop' -a '(bake __complete tasks 2>/dev/null)' -d 'タスク名'
 complete -c bake -f -n '__fish_seen_subcommand_from logs' -a '(bake __complete tasks 2>/dev/null)' -d 'タスク名'
 `;

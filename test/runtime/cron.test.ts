@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { TaskRegistry } from "../../src/bakefile/registry.ts";
 import { InvalidScheduleError } from "../../src/cron/schedule.ts";
 import { runCompose } from "../../src/runtime/compose.ts";
 import { createTaskContext } from "../../src/runtime/context.ts";
 import { runCron } from "../../src/runtime/cron.ts";
-import type { RunEachItem, Task } from "../../src/types.ts";
-import { useTempDir } from "../support/sandbox.ts";
+import type { RunEachItem, Task, TaskFunction } from "../../src/types.ts";
+import { describeIfPosix, useTempDir } from "../support/sandbox.ts";
 
 /** 出力をバッファへ集めるヘルパー */
 function makeWrite(): { chunks: string[]; write: (text: string) => void } {
@@ -166,25 +165,30 @@ describe("runCron", () => {
 });
 
 // SIGINT による停止確認を含むため POSIX 前提
-const describeIfPosix = process.platform === "win32" ? describe.skip : describe;
-
 describeIfPosix("task.cron と task.compose の組み合わせ", () => {
   const tmp = useTempDir("overbake-cron-compose");
 
   test("compose 配下の cron タスクは prefix 付きで出力し、停止シグナルで終了する", async () => {
     writeFileSync(resolve(tmp.path, "tick.ts"), `console.log("TICKED");\n`);
 
-    const registry = new TaskRegistry();
-    const cronTask = registry.registerCron(
-      "ticker",
-      { schedule: "@every 1s" },
-      ["bun", ["tick.ts"]],
-    );
+    // task.compose はサービスのみを受け取るため、cron タスクは task.service で別名に包んで渡す
+    // （`task.compose("dev-all", db, [api, task.service("poller", poll)]);` の形を手で組み立てる）。
+    // ctx はラップしたサービス名（poller）で作られるため、cron 側の出力もその名前で流れる。
+    const cronRun: TaskFunction = async (ctx) => {
+      await ctx.runCron("@every 1s", [["bun", ["tick.ts"]]]);
+    };
+    const poller: Task = {
+      name: "poller",
+      fn: async () => {},
+      options: {
+        service: { run: cronRun, source: { kind: "task", name: "ticker" } },
+      },
+    };
 
     const chunks: string[] = [];
     const composePromise = runCompose(
       { taskName: "dev", root: tmp.path, cwd: tmp.path },
-      [cronTask],
+      [[poller]],
       { graceMs: 100, noColor: true, writeOut: (t) => chunks.push(t) },
     );
 
@@ -199,8 +203,8 @@ describeIfPosix("task.cron と task.compose の組み合わせ", () => {
     await composePromise;
 
     const output = chunks.join("");
-    expect(output).toContain("[ticker]");
+    expect(output).toContain("[poller]");
     expect(output).toContain("schedule: @every 1s");
-    expect(output).toContain("Running ticker...");
+    expect(output).toContain("Running poller...");
   }, 15_000);
 });

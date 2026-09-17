@@ -4,16 +4,19 @@ import { rm as nodeRm } from "node:fs/promises";
 import { resolve as nodePath } from "node:path";
 import type {
   CmdOptions,
-  ComposeItem,
   RmOptions,
   RunEachItem,
   RunEachOptions,
+  Task,
   TaskContext,
 } from "../types.ts";
 import { Logger } from "../ui/logger.ts";
 import { runCompose as runComposeImpl } from "./compose.ts";
 import { runCron as runCronImpl } from "./cron.ts";
 import { runEach as runEachImpl } from "./run-each.ts";
+
+/** ctx.cmd の停止で SIGTERM を送った後、SIGKILL するまでの既定の猶予（ミリ秒） */
+export const KILL_GRACE_MS = 5000;
 
 export interface CreateTaskContextParams {
   name: string;
@@ -28,22 +31,34 @@ export interface CreateTaskContextParams {
   /**
    * 指定すると cmd 内で起動された子プロセスにこの signal を結びつけ、
    * abort() で SIGTERM を送れるようにする。CmdOptions.signal が個別指定された場合はそちらが優先される。
-   * task.compose の fail-fast / Ctrl+C 伝播で使用される。
+   * task.compose / task.service の fail-fast / Ctrl+C 伝播で使用される。
    */
   abortSignal?: AbortSignal;
+  /** abort による SIGTERM 後、子プロセスが終了しなければ SIGKILL するまでの猶予（ミリ秒）。既定 KILL_GRACE_MS */
+  killGraceMs?: number;
 }
 
 export function createTaskContext(
   params: CreateTaskContextParams,
 ): TaskContext {
-  const { name, root, cwd = root, logger, onOutput, abortSignal } = params;
+  const {
+    name,
+    root,
+    cwd = root,
+    logger,
+    onOutput,
+    abortSignal,
+    killGraceMs = KILL_GRACE_MS,
+  } = params;
   const log =
     logger ?? new Logger({ quiet: false, verbose: false, noColor: false });
+  const signal = abortSignal ?? new AbortController().signal;
 
   return {
     name,
     root,
     cwd,
+    signal,
     async cmd(
       command: string,
       args: readonly string[] = [],
@@ -51,7 +66,7 @@ export function createTaskContext(
     ) {
       const cmdCwd = options.cwd ?? root;
       const env = { ...process.env, ...options.env };
-      const signal = options.signal ?? abortSignal;
+      const cmdSignal = options.signal ?? abortSignal;
       return new Promise((resolve, reject) => {
         const proc = spawn(command, Array.from(args), {
           cwd: cmdCwd,
@@ -60,34 +75,57 @@ export function createTaskContext(
           shell: false,
         });
 
+        let exited = false;
+        let killTimer: ReturnType<typeof setTimeout> | undefined;
+        const clearKillTimer = (): void => {
+          if (killTimer) {
+            clearTimeout(killTimer);
+            killTimer = undefined;
+          }
+        };
+
         if (onOutput) {
           proc.stdout?.on("data", (chunk) => onOutput(chunk.toString()));
           proc.stderr?.on("data", (chunk) => onOutput(chunk.toString()));
         }
 
-        // signal が abort されたら SIGTERM で子プロセスを停止させる。
-        // 既に abort 済みなら起動直後に kill する。リスナは exit/error で必ず外す。
+        // signal が abort されたら SIGTERM で子プロセスを停止させ、killGraceMs 経過後も
+        // まだ終了していなければ SIGKILL する。既に abort 済みなら起動直後に kill する。
+        // リスナ・タイマーは exit/error で必ず外す（タイマーは unref してプロセスの生存を妨げない）。
         let onAbort: (() => void) | undefined;
-        if (signal) {
+        if (cmdSignal) {
           onAbort = () => {
-            if (proc.exitCode === null) proc.kill("SIGTERM");
+            if (exited) return;
+            proc.kill("SIGTERM");
+            killTimer = setTimeout(() => {
+              if (!exited) proc.kill("SIGKILL");
+            }, killGraceMs);
+            killTimer.unref?.();
           };
-          if (signal.aborted) {
+          if (cmdSignal.aborted) {
             onAbort();
           } else {
-            signal.addEventListener("abort", onAbort, { once: true });
+            cmdSignal.addEventListener("abort", onAbort, { once: true });
           }
         }
         const detach = () => {
-          if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+          if (cmdSignal && onAbort) {
+            cmdSignal.removeEventListener("abort", onAbort);
+          }
         };
 
-        proc.on("exit", (code) => {
+        proc.on("exit", (code, sig) => {
+          exited = true;
+          clearKillTimer();
           detach();
           // signal 経由で停止された場合は user-initiated abort なので正常終了扱い。
-          // task.compose の SIGINT/SIGTERM 伝播で送られる SIGTERM がここに該当する。
-          if (signal?.aborted) {
+          // task.compose / task.service の SIGINT/SIGTERM 伝播で送られる SIGTERM がここに該当する。
+          if (cmdSignal?.aborted) {
             resolve();
+            return;
+          }
+          if (code === null && sig) {
+            reject(new Error(`Command "${command}" was terminated by ${sig}`));
             return;
           }
           if (code !== 0) {
@@ -98,6 +136,8 @@ export function createTaskContext(
         });
 
         proc.on("error", (err) => {
+          exited = true;
+          clearKillTimer();
           detach();
           reject(err);
         });
@@ -132,8 +172,8 @@ export function createTaskContext(
         items,
       );
     },
-    async runCompose(items: ComposeItem[]): Promise<void> {
-      await runComposeImpl({ taskName: name, root, cwd }, items);
+    async runCompose(stages: readonly (readonly Task[])[]): Promise<void> {
+      await runComposeImpl({ taskName: name, root, cwd, abortSignal }, stages);
     },
     async runCron(schedule: string, items: RunEachItem[]): Promise<void> {
       await runCronImpl(
